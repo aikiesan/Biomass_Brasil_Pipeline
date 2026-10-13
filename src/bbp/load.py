@@ -37,7 +37,10 @@ log = logging.getLogger("bbp")
 # service `db` from inside Docker, and the compose port 5433 from the host.
 # An SSH tunnel to a production server also appears as localhost, so tunnels
 # must use another port (the docs use 5434) and therefore always need --yes.
-LOCAL_TARGETS = {("db", 5432), ("localhost", 5433), ("127.0.0.1", 5433), ("::1", 5433)}
+# `cp2b-db-dev` is the PILAR-2b development database (NewLook docker compose), reached
+# from the `bbp-pilar2b` compose service through the newlook_default network.
+LOCAL_TARGETS = {("db", 5432), ("localhost", 5433), ("127.0.0.1", 5433), ("::1", 5433), ("cp2b-db-dev", 5432)}
+TARGET_VARS = {"local": "BBP_DATABASE_URL", "prod": "BBP_PROD_DATABASE_URL", "pilar2b": "BBP_PILAR2B_DATABASE_URL"}
 
 # processed table -> (source parquet(s), index columns)
 TABLES: dict[str, tuple[list[str], list[str]]] = {
@@ -50,7 +53,11 @@ TABLES: dict[str, tuple[list[str], list[str]]] = {
     "n1_municipal": (["n1_municipal"], ["geocode", "year", "crop", "variant"]),
     "source_vs_factor_effect": (["source_vs_factor_effect"], ["crop", "year"]),
     "rank_shift": (["rank_shift"], ["year"]),
+    # IBGE SIDRA tables (interim/sidra/t<table>.parquet), long; the tables listed in
+    # database.sidra_tables. PILAR-2b reads PAM/PPM from bbp.v_sidra.
+    "sidra": ([], ["sidra_table", "year", "variable"]),
 }
+SIDRA_DROP_COLUMNS = ["name", "variable_raw"]  # municipality names live in the platform; raw label = variable
 N1_COMPACT = ["geocode", "year", "crop", "feedstock", "variant", "production_t", "yield_source",
               "activity_declared_only", "n1_ref_nm3", "n1_min_nm3", "n1_max_nm3"]
 
@@ -72,9 +79,9 @@ def read_dotenv(path: Path) -> dict[str, str]:
 
 
 def resolve_url(cfg: Config, url: str | None, target: str = "local") -> str:
-    """--url wins; otherwise BBP_DATABASE_URL (target local) or BBP_PROD_DATABASE_URL (target prod),
+    """--url wins; otherwise the target's variable (TARGET_VARS: local, prod, pilar2b),
     from the environment or the repository's .env file."""
-    var = "BBP_PROD_DATABASE_URL" if target == "prod" else "BBP_DATABASE_URL"
+    var = TARGET_VARS[target]
     url = url or os.environ.get(var) or read_dotenv(cfg.repo_root / ".env").get(var)
     if not url:
         raise SystemExit(f"No database URL: pass --url or set {var} (environment or .env; see .env.example)")
@@ -124,7 +131,12 @@ def collect(cfg: Config, full_n1: bool = False, compact: bool = True) -> dict[st
     is zero or missing (crops a municipality does not grow) and the AMC copy of the
     unit ratios; --full loads everything."""
     frames: dict[str, pd.DataFrame] = {}
+    sidra = collect_sidra(cfg)
+    if sidra is not None:
+        frames["sidra"] = sidra
     for name, (sources, _) in TABLES.items():
+        if name == "sidra":
+            continue
         parts = []
         for src in sources:
             if compact and src == "unit_ratios_amc":
@@ -145,6 +157,33 @@ def collect(cfg: Config, full_n1: bool = False, compact: bool = True) -> dict[st
                 df[c] = df[c].astype(str)
         frames[name] = df
     return frames
+
+
+def collect_sidra(cfg: Config) -> pd.DataFrame | None:
+    """The SIDRA tables named in database.sidra_tables, minus database.sidra_exclude_variables.
+
+    Every row is kept, zeros and missing cells included: SIDRA's "-" (a measured zero) and
+    "..."/"X" (no value) are different facts, and the flag column says which.
+    """
+    db = cfg.section("database")
+    tables = db.get("sidra_tables", [])
+    exclude = set(db.get("sidra_exclude_variables", []))
+    parts = []
+    for t in tables:
+        p = cfg.data_dir / "interim" / "sidra" / f"t{t}.parquet"
+        if not p.exists():
+            log.warning("  sidra table %s: %s not found (run `bbp run ingest`), skipped", t, p.name)
+            continue
+        df = pd.read_parquet(p)
+        df = df[~df["variable"].isin(list(exclude))].drop(columns=[c for c in SIDRA_DROP_COLUMNS if c in df])
+        parts.append(df.rename(columns={"table": "sidra_table"}))
+    if not parts:
+        return None
+    df = pd.concat(parts, ignore_index=True)
+    for c in df.columns:
+        if isinstance(df[c].dtype, pd.CategoricalDtype):
+            df[c] = df[c].astype(object).where(df[c].notna(), None)
+    return df
 
 
 def _ensure_table(cur, schema: str, name: str, df: pd.DataFrame, index_cols: list[str]) -> None:

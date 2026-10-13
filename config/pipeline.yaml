@@ -162,3 +162,7 @@ database:
   # `bbp load` writes every release into this schema and nowhere else.
   # Connection: BBP_DATABASE_URL in the environment or in .env (see .env.example).
   schema: bbp
+  # SIDRA tables loaded into bbp.sidra (view bbp.v_sidra) for the PILAR-2b platform.
+  # 5457 and 839 reach the database through crop_area; production value is not used.
+  sidra_tables: [1612, 1613, 3939, 74, 94, 3940]
+  sidra_exclude_variables: [value_thousand_brl]
