@@ -3,8 +3,14 @@
 #   docker compose build            # builds this image as bbp:<version>
 #   docker compose run --rm bbp info
 #
-# GDAL comes bundled inside the rasterio / pyogrio wheels: no system GDAL needed.
+# GDAL comes bundled inside the rasterio / pyogrio wheels: no system GDAL needed,
+# but the wheels still link the system libexpat, which python:3.12-slim (Debian
+# trixie) no longer ships.
 FROM python:3.12-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libexpat1 \
+ && rm -rf /var/lib/apt/lists/*
 
 ARG GIT_COMMIT=""
 ENV PYTHONDONTWRITEBYTECODE=1 \

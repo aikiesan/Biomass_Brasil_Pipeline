@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 from bbp.ingest.sidra import parse_sidra_rows, parse_value, tidy
 
@@ -41,6 +42,17 @@ def test_parse_blocks_and_trimmed_year_row():
     assert sorriso["value"].item() == 610000.5
     p = df[df["variable"] == "production_t"]
     assert p["value"].item() == 1_800_000
+
+
+def test_tidy_later_file_wins_on_overlap():
+    # a table split over several exports (e.g. PAM 2025 added as its own file): where two files
+    # cover the same cell, the one listed later in pipeline.yaml (the newer export) is kept
+    old = parse_sidra_rows(ROWS, 5457).assign(source_file="old.csv")
+    new = old[(old["geocode"] == 5107925) & (old["year"] == 2013)].assign(value=1.0, source_file="new.csv")
+    t = tidy(pd.concat([old, new], ignore_index=True), {})
+    cell = t[(t["geocode"] == 5107925) & (t["year"] == 2013) & (t["product"] == "Soja (em grão)")]
+    assert (cell["source_file"] == "new.csv").all() and (cell["value"] == 1.0).all()
+    assert len(t) == len(old)
 
 
 def test_tidy_maps_crops():

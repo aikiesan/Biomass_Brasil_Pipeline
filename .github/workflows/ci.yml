@@ -45,3 +45,5 @@ jobs:
         run: docker build --build-arg GIT_COMMIT=${{ github.sha }} -t bbp:ci .
       - name: Smoke test
         run: docker run --rm bbp:ci --help
+      - name: Tests inside the image (catches missing system libraries, e.g. for rasterio)
+        run: docker run --rm --entrypoint pytest bbp:ci -q
