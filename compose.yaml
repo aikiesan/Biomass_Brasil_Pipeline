@@ -1,0 +1,52 @@
+# Local development stack (Docker Desktop on Windows/macOS, or Docker on Linux).
+#
+#   copy .env.example .env               # once; adjust if needed
+#   docker compose up -d db              # PostGIS on localhost:5433
+#   docker compose run --rm bbp run      # the pipeline, inside the container
+#   docker compose run --rm bbp load --with-geometry
+#
+# The raw data folder is the PARENT of this repository (same default as
+# config/pipeline.yaml), mounted read-only. Override with BBP_RAW_HOST in .env.
+name: bbp
+
+services:
+  db:
+    image: postgis/postgis:15-3.4
+    environment:
+      POSTGRES_DB: cp2b_maps
+      POSTGRES_USER: bbp
+      POSTGRES_PASSWORD: ${BBP_LOCAL_DB_PASSWORD:-bbp_local}
+    ports:
+      - "127.0.0.1:5433:5432"          # only reachable from this computer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bbp -d cp2b_maps"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  bbp:
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
+    image: bbp:0.1.0
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BBP_DATABASE_URL: postgresql://bbp:${BBP_LOCAL_DB_PASSWORD:-bbp_local}@db:5432/cp2b_maps
+      BBP_PROD_DATABASE_URL: ${BBP_PROD_DATABASE_URL:-}
+    volumes:
+      - ${BBP_RAW_HOST:-..}:/data/raw:ro   # source data (read-only)
+      - ./data:/app/data                   # outputs, shared with the host
+      - ./config:/app/config:ro            # edit YAML without rebuilding
+      - ./src:/app/src:ro                  # edit code without rebuilding (editable install)
+      - ./tests:/app/tests:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach an SSH tunnel opened on the host
+
+volumes:
+  pgdata:

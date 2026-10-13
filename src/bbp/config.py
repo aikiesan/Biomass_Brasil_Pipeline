@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,12 +39,13 @@ class Config:
     # ---- paths -------------------------------------------------------------
     @property
     def raw_root(self) -> Path:
-        p = Path(self.raw["raw_root"])
+        # BBP_RAW_ROOT (e.g. set by Docker) wins over the YAML files
+        p = Path(os.environ.get("BBP_RAW_ROOT") or self.raw["raw_root"])
         return p if p.is_absolute() else (self.repo_root / p).resolve()
 
     @property
     def data_dir(self) -> Path:
-        p = Path(self.raw.get("data_dir", "data"))
+        p = Path(os.environ.get("BBP_DATA_DIR") or self.raw.get("data_dir", "data"))
         return p if p.is_absolute() else self.repo_root / p
 
     def input_path(self, key: str) -> Path | list[Path]:

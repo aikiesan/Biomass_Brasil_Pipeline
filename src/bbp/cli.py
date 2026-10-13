@@ -6,6 +6,8 @@
     bbp run --from reconcile          a stage and everything after it
     bbp second-crop [--years 2023 2024] [--grid-only]
     bbp check-factors                 compare conversion_factors.yaml with the CP2b canonical YAML
+    bbp load [--yes] [--dry-run]      load data/processed into PostgreSQL/PostGIS (schema bbp) as a new release
+    bbp db-status                     list the releases in the database
 """
 
 from __future__ import annotations
@@ -106,6 +108,22 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--from", dest="from_stage", choices=STAGES)
     r.add_argument("--force", action="store_true", help="re-read sources even if cached interim files are newer")
     r.add_argument("--keep-going", action="store_true", help="continue after a failed check")
+    ld = sub.add_parser("load", help="load processed tables into PostGIS as a new versioned release")
+    ld.add_argument("--target", choices=["local", "prod"], default="local",
+                    help="local = BBP_DATABASE_URL, prod = BBP_PROD_DATABASE_URL (environment or .env)")
+    ld.add_argument("--url", help="libpq URL; overrides --target")
+    ld.add_argument("--yes", action="store_true", help="required for any database that is not local")
+    ld.add_argument("--dry-run", action="store_true", help="show what would be loaded and exit")
+    ld.add_argument("--label", default="", help="free text stored with the release")
+    ld.add_argument("--keep", type=int, default=0, help="keep only the N most recent releases (0 = keep all)")
+    ld.add_argument("--full-n1", action="store_true", help="load every N1 column (default: ref/min/max only)")
+    ld.add_argument("--full", action="store_true",
+                    help="keep empty rows (crops a municipality does not grow) and the AMC unit ratios")
+    ld.add_argument("--with-geometry", action="store_true", help="also load bbp.municipality_geom (for QGIS/local use)")
+    ld.add_argument("--simplify", type=float, default=0.0, help="simplify geometry tolerance in degrees (e.g. 0.0005)")
+    st = sub.add_parser("db-status", help="list releases in the database")
+    st.add_argument("--target", choices=["local", "prod"], default="local")
+    st.add_argument("--url")
     s = sub.add_parser("second-crop")
     s.add_argument("--years", type=int, nargs="*")
     s.add_argument("--grid-only", action="store_true")
@@ -116,12 +134,27 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_info(cfg)
     if args.command == "check-factors":
         return cmd_check_factors(cfg)
+    if args.command == "db-status":
+        from bbp.load import resolve_url, status
+
+        print(status(resolve_url(cfg, args.url, args.target), cfg.section("database").get("schema", "bbp")).to_string(index=False))
+        return 0
 
     logfile = _setup_logging(cfg.data_dir, args.verbose)
     log.info("bbp %s — log: %s", __version__, logfile)
     from bbp import pipeline
 
     try:
+        if args.command == "load":
+            from bbp.load import describe, is_local, load, resolve_url
+
+            url = resolve_url(cfg, args.url, args.target)
+            if not args.yes and not args.dry_run and (args.target == "prod" or not is_local(url)):
+                log.error("Refusing to load into %s without --yes (not a local database).", describe(url))
+                return 2
+            load(cfg, url, label=args.label, keep=args.keep, full_n1=args.full_n1, compact=not args.full,
+                 with_geometry=args.with_geometry, simplify=args.simplify, dry_run=args.dry_run)
+            return 0
         if args.command == "second-crop":
             _run_stage("second_crop", pipeline.stage_second_crop, cfg, keep_going=True,
                        years=args.years, grid_only=args.grid_only)

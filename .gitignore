@@ -9,8 +9,9 @@ data/*
 *.xls
 *.zip
 
-# Local configuration (machine-specific paths)
+# Local configuration and secrets (machine-specific paths, database passwords)
 config/paths.local.yaml
+.env
 
 # Python
 __pycache__/

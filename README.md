@@ -90,6 +90,21 @@ Every stage records **invariant checks** in `data/logs/checks_<stage>.json`, for
 
 A failed `error` check stops the run; `warn` checks are reported and shipped in the release manifest.
 
+## Docker and the database
+
+```bash
+copy .env.example .env                   # once (cp on Git Bash)
+docker compose up -d db                  # local PostGIS 15 on localhost:5433
+docker compose run --rm bbp run          # the pipeline in a pinned environment
+docker compose run --rm bbp load         # load results into schema bbp as a new release
+bbp load --target prod --yes --keep 2    # publish to the production database (PILAR-2b)
+```
+
+`bbp load` writes only inside schema `bbp`, versions every load in
+`bbp.release`, and exposes the current release through `bbp.v_*` views for
+PILAR-2b. See [`docs/deployment.md`](docs/deployment.md) for Supabase, the
+Unicamp VM (SSH tunnel) and the read-only role.
+
 ## Outputs
 
 | Table (`data/processed/`) | Grain | Content |
@@ -113,7 +128,9 @@ deposit on Zenodo/REDU.
 config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml
 src/bbp/      ingest/ (sources) · harmonise · area · reconcile · inventory · publish · checks · cli
 tests/        synthetic-data unit tests (run in CI; no source data needed)
-docs/         methods · data sources · decisions log
+docs/         methods · data sources · decisions log · deployment
+docker/       initdb scripts for the local PostGIS · roles.sql for production
+Dockerfile · compose.yaml · .env.example
 data/         generated, git-ignored
 ```
 

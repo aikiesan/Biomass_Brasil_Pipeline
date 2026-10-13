@@ -71,3 +71,8 @@ reconcile:
 inventory:
   # Yield fallback when a municipality has observed area but no declared area
   yield_fallback: [rgint, uf, nation]
+
+database:
+  # `bbp load` writes every release into this schema and nowhere else.
+  # Connection: BBP_DATABASE_URL in the environment or in .env (see .env.example).
+  schema: bbp

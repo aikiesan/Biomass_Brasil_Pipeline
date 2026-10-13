@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -35,6 +36,8 @@ def sha256(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def git_commit(repo: Path) -> str | None:
+    if os.environ.get("BBP_GIT_COMMIT"):  # set at docker build time (no .git inside the image)
+        return os.environ["BBP_GIT_COMMIT"]
     try:
         out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, timeout=10)
         dirty = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, timeout=10)
