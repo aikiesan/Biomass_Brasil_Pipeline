@@ -1,0 +1,70 @@
+# =============================================================================
+# Crop correspondence: MapBiomas class  <->  IBGE PAM product
+# =============================================================================
+# observed  = MapBiomas (satellite land cover, area detected on the ground)
+# declared  = IBGE PAM (municipal agricultural statistics, area planted or
+#             destined for harvest)
+#
+# area_convention documents what PAM reports for that crop; for perennials
+# PAM's "área destinada à colheita" excludes young orchards that MapBiomas
+# still maps as coffee/citrus — a known, expected positive bias in A_obs/A_dec.
+# =============================================================================
+
+crops:
+  soybean:
+    label_en: "Soybean"
+    mapbiomas_class: [39]
+    pam_table: 5457
+    pam_product: "Soja (em grão)"
+    area_convention: "temporary — planted area"
+    feedstock: PALHA_SOJA
+
+  sugarcane:
+    label_en: "Sugarcane"
+    mapbiomas_class: [20]
+    pam_table: 5457
+    pam_product: "Cana-de-açúcar"
+    area_convention: "semi-perennial — area destined for harvest (PAM) vs. all cane fields incl. reform (MapBiomas)"
+    feedstock: PALHA
+
+  coffee:
+    label_en: "Coffee"
+    mapbiomas_class: [46]
+    pam_table: 5457
+    pam_product: "Café (em grão) Total"
+    area_convention: "perennial — area destined for harvest"
+    feedstock: CASCA_CAFE
+
+  citrus:
+    label_en: "Citrus (orange)"
+    mapbiomas_class: [47]
+    pam_table: 5457
+    pam_product: "Laranja"
+    area_convention: "perennial — PAM orange only; MapBiomas class 47 covers all citrus"
+    feedstock: BAGACO_CITROS
+
+  rice:
+    label_en: "Rice"
+    mapbiomas_class: [40]
+    pam_table: 5457
+    pam_product: "Arroz (em casca)"
+    area_convention: "temporary — planted area"
+    feedstock: null          # no rice residue in the CP2b canonical database (area comparison only)
+
+  corn_2nd:
+    label_en: "Second-season corn"
+    mapbiomas_second_crop: corn_2nd   # from the second-crop rasters (bbp second-crop)
+    pam_table: 839
+    pam_product: "Milho (em grão) - 2ª safra"
+    area_convention: "temporary — planted area, second season"
+    feedstock: PALHA_MILHO
+
+  # Declared-only crops: no MapBiomas class. They enter the inventory with the
+  # same (PAM) activity data in both variants and are flagged as such.
+  corn_1st:
+    label_en: "First-season corn"
+    mapbiomas_class: null
+    pam_table: 839
+    pam_product: "Milho (em grão) - 1ª safra"
+    area_convention: "temporary — planted area, first season (inside MapBiomas class 41/39 mosaic)"
+    feedstock: PALHA_MILHO

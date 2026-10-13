@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bbp"
+version = "0.1.0"
+description = "Biomass Brasil Pipeline: open, annually updatable reconciliation of satellite land cover (MapBiomas) and agricultural statistics (IBGE PAM) for municipal crop-residue biomethane potential in Brazil."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Lucas Nakamura Cerejo", email = "lucasnc@unicamp.br" }]
+keywords = ["biomass", "biogas", "biomethane", "MapBiomas", "IBGE", "PAM", "FOSS4G", "Brazil"]
+classifiers = [
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "pyarrow>=14",
+  "pyyaml>=6",
+  "openpyxl>=3.1",
+  "scipy>=1.10",
+  "geopandas>=0.14",
+  "pyogrio>=0.7",
+  "rasterio>=1.3",
+  "shapely>=2.0",
+  "pyproj>=3.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+bbp = "bbp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

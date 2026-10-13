@@ -1,0 +1,62 @@
+# =============================================================================
+# Municipalities created after the start of the study period (2008)
+# =============================================================================
+# MapBiomas reports every year on the CURRENT municipal mesh; PAM reports a
+# municipality only from its first year of existence. Before `first_pam_year`
+# the area of a new municipality is still inside its parent(s) in PAM.
+#
+# `bbp run harmonise` builds Minimum Comparable Areas (AMC): each new
+# municipality is merged with its parents into one unit, used for any analysis
+# that spans the change. It also checks every code/name below against the IBGE
+# mesh and reports any municipality that has data in MapBiomas but no PAM
+# record in some year (so missing entries here are detected, not silently lost).
+#
+# `first_pam_year` is filled from the data by the harmonise stage when null.
+# =============================================================================
+
+changes:
+  - code: 1504752
+    name: "Mojuí dos Campos"
+    uf: PA
+    parents: [1506807]          # Santarém
+    installed: 2013
+    first_pam_year: null
+
+  - code: 4212650
+    name: "Pescaria Brava"
+    uf: SC
+    parents: [4209409]          # Laguna
+    installed: 2013
+    first_pam_year: null
+
+  - code: 4220000
+    name: "Balneário Rincão"
+    uf: SC
+    parents: [4207007]          # Içara
+    installed: 2013
+    first_pam_year: null
+
+  - code: 4314548
+    name: "Pinto Bandeira"
+    uf: RS
+    parents: [4302105]          # Bento Gonçalves
+    installed: 2013
+    first_pam_year: null
+
+  - code: 5006275
+    name: "Paraíso das Águas"
+    uf: MS
+    parents: [5000203, 5002951, 5003256]   # Água Clara, Chapadão do Sul, Costa Rica
+    installed: 2013
+    first_pam_year: null
+
+  - code: 5101837
+    name: "Boa Esperança do Norte"
+    uf: MT
+    parents: [5107925, 5106240]  # Sorriso (~20%), Nova Ubiratã (~80% of the area)
+    installed: 2025              # created by Lei 7.264/2000, confirmed by STF in Oct 2023, installed 1 Jan 2025
+    first_pam_year: null
+
+# Units in the IBGE mesh that are not municipalities (lagoons). Excluded from
+# every per-municipality table, kept in the mesh for area checks.
+non_municipal_units: [4300001, 4300002]

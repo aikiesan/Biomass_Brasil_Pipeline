@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Biomass Brasil Pipeline (bbp): open reconciliation of satellite land cover and agricultural statistics for municipal biomethane potential in Brazil"
+version: 0.1.0
+license: GPL-3.0-or-later
+repository-code: "https://github.com/aikiesan/Biomass_Brasil_Pipeline"
+authors:
+  - family-names: Cerejo
+    given-names: Lucas Nakamura
+    email: lucasnc@unicamp.br
+    orcid: "https://orcid.org/0000-0002-9292-2752"
+    affiliation: "Centro Paulista de Estudos de Biogás e Bioprodutos (CP2b), NIPE, Universidade Estadual de Campinas (Unicamp)"
+keywords:
+  - biomass
+  - biomethane
+  - MapBiomas
+  - IBGE
+  - FOSS4G
+  - reproducibility

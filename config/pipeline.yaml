@@ -1,0 +1,73 @@
+# =============================================================================
+# Biomass Brasil Pipeline — main configuration
+# =============================================================================
+# Every path under `inputs` is relative to `raw_root`. `raw_root` is itself
+# relative to the repository root unless absolute. Override any of these on a
+# given machine with config/paths.local.yaml (git-ignored), e.g.
+#
+#   raw_root: "C:/Users/Lucas/Documents/Reposicionamento_Submissão_ESD"
+#
+# =============================================================================
+
+raw_root: ".."            # default: the folder that contains this repository
+data_dir: "data"          # outputs (relative to the repository root)
+
+years:
+  start: 2008
+  end: 2025               # MapBiomas Col. 11 reaches 2025; PAM 2025 not yet ingested
+
+inputs:
+  municipalities_shp: "00_Primary_Data_Sources_PILAR2b/01_IBGE_Shapefiles/BR_Municipios_2025/BR_Municipios_2025.shp"
+
+  mapbiomas_municipal_xlsx: "MapBiomas_Update_2025_Colecao_11/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY_2025/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY.xlsx"
+  mapbiomas_legend_csv: "MapBiomas_Update_2025_Colecao_11/legend_code_mapbiomas_brazil_collection_11.csv"
+
+  # SIDRA table 5457 exported as CSV (one file per block of years; all variables)
+  pam_5457_csv:
+    - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/tabela5457.csv"
+    - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/tabela5457 (1).csv"
+  # SIDRA table 839 (corn by season) exported as XLSX, one sheet per variable
+  pam_839_xlsx: "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/PAM_tabela839_milho_por_safra.xlsx"
+
+  second_crop_tif_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Segunda_Safra_TIF"
+  # National series exported from the MapBiomas platform; used only as an invariant check
+  second_crop_national_csv: "00_Primary_Data_Sources_PILAR2b/11_Analises_Complementares/Milho2_Serasa/Série temporal de Agricultura • Uso agrícola - Segunda safra por classe • 2000 - 2024.csv"
+
+mapbiomas:
+  collection: 11
+  sheet: "COVERAGE_11"
+  # Guard against class renumbering between collections: the level-4 label of
+  # each crop class in the sheet must contain this text.
+  expected_labels:
+    20: "Sugar cane"
+    39: "Soybean"
+    40: "Rice"
+    46: "Coffee"
+    47: "Citrus"
+    62: "Cotton"
+
+second_crop:
+  tif_pattern: "{year}_agriculture_agricultural_use_second_crop_*.tif"
+  # Pixel values in the MapBiomas second-crop rasters. Any other non-zero value
+  # is accumulated as `other_2nd`.
+  classes:
+    1: corn_2nd
+    62: cotton_2nd
+    41: other_2nd         # "outras culturas de segunda safra / cobertura"
+  window: 2048            # processing window (pixels); 2048 keeps peak RAM < 1 GB
+  # Name of the column in the national series CSV for each class (invariant check)
+  national_series_labels:
+    corn_2nd: "Milho de segunda safra"
+    cotton_2nd: "Algodão de segunda safra"
+    other_2nd: "Outras culturas de segunda safra / Cobertura"
+  national_tolerance: 0.005 # |pipeline − MapBiomas| / MapBiomas allowed per year (observed: < 0.01 %)
+
+reconcile:
+  scales: [municipality, rgint, uf, nation]
+  tolerances: [0.10, 0.25]   # share of units with |A_obs/A_dec − 1| <= tol
+  min_area_ha: 50            # units where both sources are below this are not scored
+  reference_years: [2020, 2021, 2022, 2023, 2024]
+
+inventory:
+  # Yield fallback when a municipality has observed area but no declared area
+  yield_fallback: [rgint, uf, nation]

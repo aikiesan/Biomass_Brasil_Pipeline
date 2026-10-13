@@ -1,0 +1,34 @@
+# Data never goes into git: raw inputs live outside the repo, outputs are rebuilt
+data/*
+!data/README.md
+*.tif
+*.tiff
+*.gpkg
+*.parquet
+*.xlsx
+*.xls
+*.zip
+
+# Local configuration (machine-specific paths)
+config/paths.local.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# transfer archive used while developing from the cloud session
+.transfer/

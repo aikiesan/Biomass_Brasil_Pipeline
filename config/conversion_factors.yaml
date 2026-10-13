@@ -1,0 +1,61 @@
+# =============================================================================
+# Conversion factors for the theoretical potential (N1)
+# =============================================================================
+# N1 [Nm³ CH4/yr] = P [t product] × g [t residue / t product]
+#                   × TS [t DM / t residue] × VS/TS [t VS / t DM]
+#                   × BMP [Nm³ CH4 / t VS]           (NmL/gVS == Nm³/t VS)
+#
+# These values are NOT new. They are copied from the CP2b canonical parameter
+# set so that the pipeline is self-contained:
+#   - g:            Metodo_CP2b/cp2b_params.py (v5.1, 2026-09-24)
+#   - TS, VS, BMP:  06_CP2B_Canonical/canonical_parameters/feedstocks.yaml (v1.0, 2026-06-04)
+# `bbp check-factors` compares this file against the canonical YAML when it
+# is available and reports any drift.
+#
+# Fractions are given as fractions (0–1), not percent.
+# =============================================================================
+
+source:
+  canonical_yaml: "00_Primary_Data_Sources_PILAR2b/06_CP2B_Canonical/canonical_parameters/feedstocks.yaml"
+  version: "CP2b canonical v1.0 / Método CP2b v5.1"
+
+feedstocks:
+  PALHA_SOJA:
+    label_en: "Soybean straw"
+    activity: production_t
+    g:     {min: 1.35, ref: 1.40, max: 1.50}   # t residue / t grain
+    ts:    {min: 0.80, ref: 0.84, max: 0.88}
+    vs_ts: {min: 0.80, ref: 0.85, max: 0.90}
+    bmp:   {min: 150,  ref: 220,  max: 280}
+
+  PALHA_MILHO:
+    label_en: "Corn stover"
+    activity: production_t
+    g:     {min: 1.0,  ref: 1.1,  max: 1.2}
+    ts:    {min: 0.70, ref: 0.82, max: 0.90}
+    vs_ts: {min: 0.78, ref: 0.86, max: 0.92}
+    bmp:   {min: 150,  ref: 230,  max: 300}
+
+  PALHA:
+    label_en: "Sugarcane straw"
+    activity: production_t
+    g:     {min: 0.12, ref: 0.14, max: 0.15}   # t DRY MATTER / t cane -> TS fixed at 1
+    ts:    {min: 1.0,  ref: 1.0,  max: 1.0}
+    vs_ts: {min: 0.72, ref: 0.82, max: 0.92}
+    bmp:   {min: 140,  ref: 175,  max: 250}
+
+  CASCA_CAFE:
+    label_en: "Coffee husk"
+    activity: production_t
+    g:     {min: 1.0,  ref: 1.0,  max: 1.18}   # t / t processed coffee
+    ts:    {min: 0.82, ref: 0.88, max: 0.93}
+    vs_ts: {min: 0.88, ref: 0.93, max: 0.97}
+    bmp:   {min: 120,  ref: 165,  max: 220}
+
+  BAGACO_CITROS:
+    label_en: "Citrus pulp (peel + bagasse)"
+    activity: production_t
+    g:     {min: 0.48, ref: 0.50, max: 0.52}   # t wet / t fruit
+    ts:    {min: 0.10, ref: 0.18, max: 0.26}
+    vs_ts: {min: 0.82, ref: 0.88, max: 0.94}
+    bmp:   {min: 170,  ref: 230,  max: 310}
