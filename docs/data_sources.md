@@ -20,9 +20,11 @@ a later run can prove it used the same bytes.
 The parser reads SIDRA exports as produced by the SIDRA web interface (CSV or
 XLSX, all variables in one file, municipalities in rows, *year × product* in
 columns). It is robust to the trailing-cell trimming of the merged year row.
-When PAM 2025 is published, export table 5457 and 839 for 2025, add the files
-to `inputs.pam_5457_csv` / replace the 839 workbook, and rerun
-`bbp run --force`.
+When PAM 2025 is published, export tables 5457 and 839 for 2025 and append
+the files to `inputs.pam_5457_csv` / `inputs.pam_839_xlsx` (both accept one
+file or a list), then rerun `bbp run --force`. Where two files cover the same
+municipality × year × product × variable, the file listed later wins, so list
+the newest export last.
 
 ## Known source issues found by the checks
 

@@ -24,6 +24,10 @@ def _is_fresh(out: Path, inputs: list[Path]) -> bool:
     return out.stat().st_mtime >= newest
 
 
+def _as_list(path: Path | list[Path]) -> list[Path]:
+    return path if isinstance(path, list) else [path]
+
+
 def _read(cfg: Config, *parts: str) -> pd.DataFrame:
     path = cfg.data_dir.joinpath(*parts)
     if not path.exists():
@@ -94,11 +98,12 @@ def stage_ingest(cfg: Config, ck: CheckLog, force: bool = False) -> None:
     ck.add("mapbiomas_years", years_present == cfg.years, f"{years_present[0]}–{years_present[-1]}", years_present)
 
     # ---- PAM (SIDRA) ----------------------------------------------------------
-    csvs, x839 = cfg.input_path("pam_5457_csv"), cfg.input_path("pam_839_xlsx")
+    # each input may be one file or a list (e.g. a new year exported as its own file)
+    csvs, x839 = _as_list(cfg.input_path("pam_5457_csv")), _as_list(cfg.input_path("pam_839_xlsx"))
     out_pam = cfg.out("interim", "pam.parquet")
-    if force or not _is_fresh(out_pam, [*csvs, x839]):
-        log.info("Ingest: PAM tables 5457 (%d files) and 839", len(csvs))
-        frames = [sidra.read_sidra_csv(p, 5457) for p in csvs] + [sidra.read_sidra_xlsx(x839, 839)]
+    if force or not _is_fresh(out_pam, [*csvs, *x839]):
+        log.info("Ingest: PAM tables 5457 (%d files) and 839 (%d files)", len(csvs), len(x839))
+        frames = [sidra.read_sidra_csv(p, 5457) for p in csvs] + [sidra.read_sidra_xlsx(p, 839) for p in x839]
         pam = sidra.tidy(pd.concat(frames, ignore_index=True), cfg.crops)
         _write(pam, cfg, "interim", "pam.parquet")
     pam = pd.read_parquet(out_pam)
