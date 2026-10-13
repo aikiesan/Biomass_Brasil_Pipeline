@@ -56,3 +56,16 @@ def test_load_roundtrip(tmp_path, monkeypatch):
     assert st["is_current"].tolist() == [True]
     with psycopg.connect(URL, autocommit=True) as conn:
         conn.execute("DROP SCHEMA bbp_test CASCADE")
+
+
+def test_git_head_without_git_binary(tmp_path):
+    from bbp.publish import _read_git_head
+
+    g = tmp_path / ".git"
+    (g / "refs" / "heads").mkdir(parents=True)
+    (g / "HEAD").write_text("ref: refs/heads/main\n")
+    (g / "refs" / "heads" / "main").write_text("abc123\n")
+    assert _read_git_head(tmp_path) == "abc123"
+    (g / "refs" / "heads" / "main").unlink()
+    (g / "packed-refs").write_text("# pack-refs\ndef456 refs/heads/main\n")
+    assert _read_git_head(tmp_path) == "def456"

@@ -35,8 +35,29 @@ def sha256(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _read_git_head(repo: Path) -> str | None:
+    """Commit hash from .git files, without the git executable (e.g. inside Docker)."""
+    git = repo / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head
+        ref = head[5:]
+        loose = git / ref
+        if loose.exists():
+            return loose.read_text(encoding="utf-8").strip()
+        packed = git / "packed-refs"
+        if packed.exists():
+            for line in packed.read_text(encoding="utf-8").splitlines():
+                if line.endswith(" " + ref):
+                    return line.split()[0]
+    except OSError:
+        pass
+    return None
+
+
 def git_commit(repo: Path) -> str | None:
-    if os.environ.get("BBP_GIT_COMMIT"):  # set at docker build time (no .git inside the image)
+    if os.environ.get("BBP_GIT_COMMIT"):  # set explicitly (e.g. CI)
         return os.environ["BBP_GIT_COMMIT"]
     try:
         out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, timeout=10)
@@ -45,7 +66,8 @@ def git_commit(repo: Path) -> str | None:
             return out.stdout.strip() + ("-dirty" if dirty.stdout.strip() else "")
     except (OSError, subprocess.SubprocessError):
         pass
-    return None
+    # no git executable (Docker image): read .git directly; cleanliness cannot be checked
+    return _read_git_head(repo)
 
 
 def _inputs(cfg: Config) -> list[Path]:

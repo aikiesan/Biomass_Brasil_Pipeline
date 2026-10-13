@@ -45,6 +45,7 @@ services:
       - ./config:/app/config:ro            # edit YAML without rebuilding
       - ./src:/app/src:ro                  # edit code without rebuilding (editable install)
       - ./tests:/app/tests:ro
+      - ./.git:/app/.git:ro                # lets each release record the current commit
     extra_hosts:
       - "host.docker.internal:host-gateway"  # reach an SSH tunnel opened on the host
 
