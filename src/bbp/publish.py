@@ -71,10 +71,7 @@ def git_commit(repo: Path) -> str | None:
 
 
 def _inputs(cfg: Config) -> list[Path]:
-    paths: list[Path] = []
-    for key in cfg.raw["inputs"]:
-        p = cfg.input_path(key)
-        paths.extend(p if isinstance(p, list) else [p])
+    paths = [p for _, p in cfg.input_files()]
     tif_dir = cfg.input_path("second_crop_tif_dir")
     if tif_dir.is_dir():
         paths.extend(sorted(tif_dir.glob("*.tif")))
@@ -126,7 +123,7 @@ def publish(cfg: Config, ck: CheckLog) -> Path:
         "credits": {
             "MapBiomas": "Projeto MapBiomas — Collection 11 of the annual land use and land cover maps of Brazil and the "
                          "second-crop (beta) layer, accessed via mapbiomas.org.",
-            "IBGE": "IBGE — Produção Agrícola Municipal (PAM), SIDRA tables 5457 and 839; Malha Municipal 2025.",
+            "IBGE": "IBGE — Produção Agrícola Municipal (PAM), SIDRA tables 5457, 839, 1612, 1613; Pesquisa da Pecuária Municipal (PPM), tables 3939, 74, 94, 3940; Malha Municipal 2025.",
             "CP2b": "Conversion factors from the CP2b canonical parameter set (FAPESP 2024/01112-1).",
         },
     }

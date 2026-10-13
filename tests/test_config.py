@@ -8,8 +8,12 @@ def test_config_loads_and_is_consistent():
     cfg = load_config()
     assert cfg.years[0] <= cfg.years[-1]
     feed = cfg.factors["feedstocks"]
+    tables = cfg.sidra_tables()
+    assert {5457, 839} <= set(tables)
     for crop, spec in cfg.crops.items():
-        assert spec["pam_table"] in (5457, 839), crop
+        assert spec["pam_table"] in tables, crop
+        products = tables[spec["pam_table"]].get("products")
+        assert products is None or spec["pam_product"] in products, crop
         if spec.get("feedstock"):
             assert spec["feedstock"] in feed, crop
     for fs, spec in feed.items():

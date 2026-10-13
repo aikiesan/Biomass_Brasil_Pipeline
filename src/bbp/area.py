@@ -29,23 +29,25 @@ def crop_area_table(
         grid["crop"] = crop
 
         # ---- observed -----------------------------------------------------
+        # a coverage class, a second-crop class, or both (summed: e.g. cotton = first-season class 62
+        # + second-season cotton). A year counts as observed only if every named source covers it.
+        parts, available, sources = [], pd.Series(True, index=grid.index), []
         if spec.get("mapbiomas_class"):
-            obs = (mb_by_class[mb_by_class["class_id"].isin(spec["mapbiomas_class"])]
-                   .groupby(["geocode", "year"], as_index=False)["area_ha"].sum()
-                   .rename(columns={"area_ha": "a_obs_ha"}))
-            available = grid["year"].isin(mb_years)
-            obs_source = "mapbiomas_coverage"
-        elif spec.get("mapbiomas_second_crop") and second_crop is not None:
-            obs = (second_crop[second_crop["class"] == spec["mapbiomas_second_crop"]]
-                   .groupby(["geocode", "year"], as_index=False)["area_ha"].sum()
-                   .rename(columns={"area_ha": "a_obs_ha"}))
-            available = grid["year"].isin(sc_years)
-            obs_source = "mapbiomas_second_crop"
-        else:
-            obs = pd.DataFrame({"geocode": pd.Series(dtype="int64"), "year": pd.Series(dtype="int64"),
-                                "a_obs_ha": pd.Series(dtype="float64")})
-            available = pd.Series(False, index=grid.index)
-            obs_source = "none"
+            parts.append(mb_by_class[mb_by_class["class_id"].isin(spec["mapbiomas_class"])])
+            available &= grid["year"].isin(mb_years)
+            sources.append("mapbiomas_coverage")
+        if spec.get("mapbiomas_second_crop"):
+            if second_crop is not None:
+                parts.append(second_crop[second_crop["class"] == spec["mapbiomas_second_crop"]])
+            available &= grid["year"].isin(sc_years)
+            sources.append("mapbiomas_second_crop")
+        if not sources:
+            available &= False
+        obs = (pd.concat([p_[["geocode", "year", "area_ha"]] for p_ in parts], ignore_index=True)
+               if parts else pd.DataFrame({"geocode": pd.Series(dtype="int64"), "year": pd.Series(dtype="int64"),
+                                           "area_ha": pd.Series(dtype="float64")}))
+        obs = obs.groupby(["geocode", "year"], as_index=False)["area_ha"].sum().rename(columns={"area_ha": "a_obs_ha"})
+        obs_source = "+".join(sources) or "none"
         grid = grid.merge(obs, on=["geocode", "year"], how="left")
         grid["a_obs_ha"] = np.where(available, grid["a_obs_ha"].fillna(0.0), np.nan)
         grid["obs_source"] = obs_source
@@ -54,6 +56,8 @@ def crop_area_table(
         t, p = spec["pam_table"], spec["pam_product"]
         for var, name in (("area_planted_ha", "a_dec_ha"), ("area_harvested_ha", "a_harv_ha"), ("production_t", "prod_t")):
             grid = grid.merge(_pam_variable(pam, t, p, var, name), on=["geocode", "year"], how="left")
+        prelim = pam.loc[(pam["table"] == t) & pam["preliminary"].astype(bool), "year"].unique() if "preliminary" in pam else []
+        grid["dec_preliminary"] = grid["year"].isin(prelim)
         frames.append(grid)
 
     out = pd.concat(frames, ignore_index=True)

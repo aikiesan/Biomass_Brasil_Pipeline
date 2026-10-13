@@ -29,6 +29,11 @@ and is unaffected.
 * **Coverage classes** (Collection 11 municipal statistics, hectares, summed
   over biomes): soybean 39, sugarcane 20, coffee 46, citrus 47, rice 40.
   Areas are those published by MapBiomas.
+* **Cotton**: coverage class 62 (first-season cotton) **plus** second-season
+  cotton from the second-crop rasters (pixel 62), because PAM reports one
+  cotton area for both seasons. A year is observed only when both sources cover
+  it, so cotton has no observed area in 2025 until a 2025 second-crop raster
+  exists. Cotton has no CP2b residue factor: area comparison only.
 * **Second-season corn** from the second-crop rasters (pixel value 1 = corn;
   62 = cotton; 41 = other second-season crops / cover). Area is computed by the
   pipeline:
@@ -47,11 +52,40 @@ and is unaffected.
 * First-season corn has no MapBiomas class (it sits inside classes 39/41) and
   is therefore declared-only: both inventory variants use PAM for it.
 
-## 3. Declared area and production (PAM)
+## 3. Declared area and production (PAM) and livestock (PPM)
+
+Every SIDRA table is listed under `sidra:` in `config/pipeline.yaml` with the
+exports that make up its series. The ingest reads them in the order listed;
+where two exports cover the same municipality × year × product × variable, the
+one listed later wins. Each table is written to `interim/sidra/t<table>.parquet`
+(long: geocode, year, product, variable, unit, value, flag, preliminary,
+source_file). Rendimento médio (yield) is dropped everywhere: it is derived.
 
 * Table 5457: area planted or destined for harvest, area harvested, quantity
-  produced (2008–2024).
-* Table 839: corn by season (1st/2nd), same variables (2008–2024).
+  produced (2008–2025), seven products (the 2025 export has all 86; only the
+  seven of the earlier exports are kept so that every year covers the same set).
+* Table 839: corn by season (1st/2nd), same variables (2008–2025).
+* Tables 1612 (temporary crops: sugarcane, soybean, corn, rice, herbaceous
+  cotton) and 1613 (permanent crops: coffee total/arábica/canephora, orange),
+  2008–2025. 1613's "área destinada à colheita" is stored as `area_planted_ha`,
+  as in 5457. Cotton's declared area comes from 1612 (it is not in the 5457
+  exports). Arábica + canephora are checked not to exceed the coffee total.
+* PPM: herds (3939), animal products (74), milked cows (94), aquaculture (3940,
+  from 2013), 2008–2025. Units are kept per row (`unit`), taken from the
+  variable text or, for 74 and 3940, from the product text. "Total" of 74 and
+  3940 is not ingested (it adds incompatible units). "Suíno - matrizes" and
+  "Galináceos - galinhas" are subsets of their totals and must never be added
+  to them (checked). The fish aggregate of 3940 ("Peixes") is empty in every
+  year, so fish totals must be summed from the species (a warning is raised if
+  IBGE starts filling it).
+* **Preliminary year.** IBGE publishes the newest year of every table as
+  preliminary and revises it at the next release. The ingest sets
+  `preliminary = True` for that year, carries it into `crop_area`
+  (`dec_preliminary`), and warns when the year before it still comes from an
+  export in which it was the newest (i.e. the preliminary values, possibly
+  revised since).
+* The area comparison uses PAM tables 5457 and 839 and any table named in
+  `crops.yaml` (currently 1612, for cotton): `interim/pam.parquet`.
 * SIDRA symbols are preserved as flags: `-` → 0 (true zero); `...`, `..`, `X`
   → missing (never zero). Cells missing in one source are dropped from both
   sources before any aggregation, so totals at every scale compare like with like.
@@ -91,8 +125,8 @@ are planned (see `decisions.md`).
   municipality has observed area but no usable declared yield, Y comes from the
   intermediate region, then the state, then the nation (`yield_source`).
 * Residues: soybean straw, corn stover (1st and 2nd season), sugarcane straw
-  (g on a dry-matter basis, TS = 1), coffee husk, citrus pulp. Rice has no
-  residue in the CP2b parameter set and enters the area comparison only.
+  (g on a dry-matter basis, TS = 1), coffee husk, citrus pulp. Rice and cotton
+  have no residue in the CP2b parameter set and enter the area comparison only.
 * Factor uncertainty: all-min, all-max and one-at-a-time (g, TS, VS/TS, BMP at
   min/max, others at ref).
 * Source vs factor effect (per crop and year): median and p90 of
