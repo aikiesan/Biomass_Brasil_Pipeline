@@ -1,0 +1,8 @@
+# Keep LF in the repository on every OS (Windows checkouts convert on the fly)
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.tif binary
+*.parquet binary
+*.gpkg binary
+*.xlsx binary
