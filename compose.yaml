@@ -49,5 +49,27 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"  # reach an SSH tunnel opened on the host
 
+  # Same image, attached to the PILAR-2b development stack (NewLook docker compose) so
+  # `load --target pilar2b` can reach its database container (cp2b-db-dev). Only for this:
+  #   docker compose run --rm bbp-pilar2b load --target pilar2b --label "..."
+  # Needs BBP_PILAR2B_DATABASE_URL in .env and the NewLook stack's db running.
+  bbp-pilar2b:
+    image: bbp:0.1.0
+    profiles: ["pilar2b"]
+    environment:
+      BBP_PILAR2B_DATABASE_URL: ${BBP_PILAR2B_DATABASE_URL:-}
+    volumes:
+      - ${BBP_RAW_HOST:-..}:/data/raw:ro
+      - ./data:/app/data
+      - ./config:/app/config:ro
+      - ./src:/app/src:ro
+      - ./.git:/app/.git:ro
+    networks: [pilar2b]
+
 volumes:
   pgdata:
+
+networks:
+  pilar2b:
+    name: newlook_default
+    external: true

@@ -47,6 +47,7 @@ Without Docker the same commands work from the venv (`bbp load` then reads
 | `bbp.<table>` | `municipality_attributes`, `crop_area`, `agreement_by_scale`, `unit_ratios` (all scales, `scale` column), `predictors`, `n1_municipal`, `source_vs_factor_effect`, `rank_shift` — each with `release_id` |
 | `bbp.v_<table>` | the same tables filtered to the current release — **what PILAR-2b reads** |
 | `bbp.municipality_geom` | optional (`--with-geometry`), for local use; production already has municipalities |
+| `bbp.sidra` / `bbp.v_sidra` | the IBGE SIDRA tables in `database.sidra_tables` (PAM 1612, 1613; PPM 3939, 74, 94, 3940), long: `sidra_table, survey, geocode, year, product, variable, unit, value, flag, preliminary, source_file`. Every cell is kept: `flag` tells a measured zero (`zero`) from a missing value (`not_available`, `suppressed`). Production value is excluded. About 5.7 M rows, 1 GB |
 
 * One load is one transaction: readers see the old release until the new one is complete.
 * Releases are never overwritten. `--keep N` deletes all but the newest N (cascade).
@@ -54,6 +55,24 @@ Without Docker the same commands work from the venv (`bbp load` then reads
   area/production for a crop are skipped, and the AMC copy of the unit ratios is
   omitted (≈ 225 MB per release instead of ≈ 600 MB). `--full` loads everything.
 * Columns are added automatically when a new version adds them; none are dropped.
+
+## 2b. Feeding the local PILAR-2b stack
+
+The PILAR-2b development stack (NewLook `docker compose`, database container
+`cp2b-db-dev`) reads PAM and PPM from `bbp.v_sidra` (PILAR-2b
+`backend/ingest/bbp.py`). To load a release into it:
+
+```bash
+# once: in .env (git-ignored), with the user/password of NewLook's docker-compose.yml
+#   BBP_PILAR2B_DATABASE_URL=postgresql://<user>:<password>@cp2b-db-dev:5432/cp2b_maps
+# the NewLook db must be running (it creates the newlook_default network)
+docker compose --profile pilar2b run --rm bbp-pilar2b load --target pilar2b --label "<what changed>" --keep 2
+```
+
+`bbp-pilar2b` is the same image attached to the `newlook_default` network. The
+target counts as local (no `--yes`), and the load writes only schema `bbp`.
+Then promote in PILAR-2b (`promote_ibge_ppm.py` / `promote_pam.py --source bbp`;
+see PILAR-2b `backend/ingest/README.md`).
 
 ## 3. Production database
 

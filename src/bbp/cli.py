@@ -107,8 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--force", action="store_true", help="re-read sources even if cached interim files are newer")
     r.add_argument("--keep-going", action="store_true", help="continue after a failed check")
     ld = sub.add_parser("load", help="load processed tables into PostGIS as a new versioned release")
-    ld.add_argument("--target", choices=["local", "prod"], default="local",
-                    help="local = BBP_DATABASE_URL, prod = BBP_PROD_DATABASE_URL (environment or .env)")
+    ld.add_argument("--target", choices=["local", "prod", "pilar2b"], default="local",
+                    help="local = BBP_DATABASE_URL, prod = BBP_PROD_DATABASE_URL, pilar2b = BBP_PILAR2B_DATABASE_URL "
+                         "(the PILAR-2b development database; environment or .env)")
     ld.add_argument("--url", help="libpq URL; overrides --target")
     ld.add_argument("--yes", action="store_true", help="required for any database that is not local")
     ld.add_argument("--dry-run", action="store_true", help="show what would be loaded and exit")
@@ -120,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     ld.add_argument("--with-geometry", action="store_true", help="also load bbp.municipality_geom (for QGIS/local use)")
     ld.add_argument("--simplify", type=float, default=0.0, help="simplify geometry tolerance in degrees (e.g. 0.0005)")
     st = sub.add_parser("db-status", help="list releases in the database")
-    st.add_argument("--target", choices=["local", "prod"], default="local")
+    st.add_argument("--target", choices=["local", "prod", "pilar2b"], default="local")
     st.add_argument("--url")
     s = sub.add_parser("second-crop")
     s.add_argument("--years", type=int, nargs="*")
