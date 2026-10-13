@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -22,10 +23,6 @@ def _is_fresh(out: Path, inputs: list[Path]) -> bool:
         return False
     newest = max((p.stat().st_mtime for p in inputs if p.exists()), default=0)
     return out.stat().st_mtime >= newest
-
-
-def _as_list(path: Path | list[Path]) -> list[Path]:
-    return path if isinstance(path, list) else [path]
 
 
 def _read(cfg: Config, *parts: str) -> pd.DataFrame:
@@ -97,22 +94,22 @@ def stage_ingest(cfg: Config, ck: CheckLog, force: bool = False) -> None:
     years_present = sorted(mb["year"].unique().tolist())
     ck.add("mapbiomas_years", years_present == cfg.years, f"{years_present[0]}–{years_present[-1]}", years_present)
 
-    # ---- PAM (SIDRA) ----------------------------------------------------------
-    # each input may be one file or a list (e.g. a new year exported as its own file)
-    csvs, x839 = _as_list(cfg.input_path("pam_5457_csv")), _as_list(cfg.input_path("pam_839_xlsx"))
+    # ---- SIDRA tables (PAM, PPM) ---------------------------------------------
+    tables = cfg.sidra_tables()
+    drop_vars = cfg.raw.get("sidra_drop_variables", [])
+    for table, spec in tables.items():
+        _ingest_sidra_table(cfg, ck, table, spec, drop_vars, mesh_codes, force)
+
+    # PAM rows used by the area comparison: tables 5457 and 839 plus any table named in crops.yaml
+    pam_tables = sorted({5457, 839} | {int(c["pam_table"]) for c in cfg.crops.values()})
+    missing_tables = [t for t in pam_tables if t not in tables]
+    ck.add("pam_tables_configured", not missing_tables, f"crops.yaml needs tables not in `sidra`: {missing_tables}")
+    sources = [cfg.out("interim", "sidra", f"t{t}.parquet") for t in pam_tables if t in tables]
     out_pam = cfg.out("interim", "pam.parquet")
-    if force or not _is_fresh(out_pam, [*csvs, *x839]):
-        log.info("Ingest: PAM tables 5457 (%d files) and 839 (%d files)", len(csvs), len(x839))
-        frames = [sidra.read_sidra_csv(p, 5457) for p in csvs] + [sidra.read_sidra_xlsx(p, 839) for p in x839]
-        pam = sidra.tidy(pd.concat(frames, ignore_index=True), cfg.crops)
+    if force or not _is_fresh(out_pam, sources):
+        pam = sidra.tidy(pd.concat([pd.read_parquet(p) for p in sources], ignore_index=True), cfg.crops)
         _write(pam, cfg, "interim", "pam.parquet")
     pam = pd.read_parquet(out_pam)
-    pam_codes = set(pam["geocode"].unique())
-    ck.add("pam_geocodes_in_mesh", pam_codes <= mesh_codes, f"{len(pam_codes - mesh_codes)} not in mesh",
-           sorted(pam_codes - mesh_codes)[:20])
-    ck.add("pam_non_negative", bool((pam["value"].dropna() >= 0).all()))
-    unparsed = pam["flag"].str.startswith("unparsed").sum()
-    ck.add("pam_all_values_parsed", unparsed == 0, f"{unparsed} unparsed cells")
     for crop, spec in cfg.crops.items():
         has = ((pam["crop"] == crop) & (pam["variable"] == "area_planted_ha")).any()
         ck.add(f"pam_has_{crop}", has, f"table {spec['pam_table']} product {spec['pam_product']!r}")
@@ -123,6 +120,58 @@ def stage_ingest(cfg: Config, ck: CheckLog, force: bool = False) -> None:
     sc = cfg.data_dir / "interim" / "second_crop_municipal.parquet"
     ck.add("second_crop_table_present", sc.exists(),
            "" if sc.exists() else "run `bbp second-crop` to compute it from the rasters", severity="warn")
+
+
+def _ingest_sidra_table(cfg: Config, ck: CheckLog, table: int, spec: dict, drop_vars: list[str],
+                        mesh_codes: set[int], force: bool) -> None:
+    from bbp.ingest import sidra
+
+    files = spec["files"]
+    absent = [str(p) for p in files if not p.exists()]
+    t = f"sidra_{table}"
+    if not ck.add(f"{t}_files_exist", not absent, f"missing: {absent}"):
+        return
+    out = cfg.out("interim", "sidra", f"t{table}.parquet")
+    meta_path = out.with_suffix(".meta.json")
+    if force or not (_is_fresh(out, files) and meta_path.exists()):
+        log.info("Ingest: SIDRA table %s (%s, %d files)", table, spec.get("survey", "?"), len(files))
+        df, meta = sidra.read_table(table, files, spec.get("products"), spec.get("exclude_products", []), drop_vars)
+        df.insert(1, "survey", spec.get("survey"))
+        _write(df, cfg, "interim", "sidra", f"t{table}.parquet")
+        meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    df = pd.read_parquet(out)
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    codes = set(df["geocode"].unique().tolist())
+    ck.add(f"{t}_geocodes_in_mesh", codes <= mesh_codes, f"{len(codes - mesh_codes)} not in mesh", sorted(codes - mesh_codes)[:20])
+    ck.add(f"{t}_non_negative", bool((df["value"].dropna() >= 0).all()))
+    unparsed = int(df["flag"].astype(str).str.startswith("unparsed").sum())
+    ck.add(f"{t}_all_values_parsed", unparsed == 0, f"{unparsed} unparsed cells")
+    years = sorted(df["year"].unique().tolist())
+    ck.add(f"{t}_years_contiguous", years == list(range(years[0], years[-1] + 1)), f"{years[0]}–{years[-1]}", years)
+    wanted = set(spec.get("products") or [])
+    absent_products = sorted(wanted - set(df["product"].astype(str).unique()))
+    ck.add(f"{t}_has_configured_products", not absent_products, f"not found (renamed by IBGE?): {absent_products}")
+    for prod in spec.get("exclude_products", []):
+        ck.add(f"{t}_excludes_{prod}", not (df["product"] == prod).any())
+    for sub in spec.get("subsets", []):
+        bad = sidra.subset_violations(df, sub["total"], sub["parts"])
+        cases = bad.reset_index()[["geocode", "year"]].astype(int).values.tolist()
+        ck.add(f"{t}_{'+'.join(sub['parts'])}_within_{sub['total']}", bad.empty,
+               f"{len(bad)} municipality-years where the parts exceed the total (kept as published)", cases[:50],
+               severity=sub.get("severity", "error"))
+    for prod in spec.get("expected_empty", []):
+        filled = int(((df["product"] == prod) & (df["value"] > 0)).sum())
+        ck.add(f"{t}_{prod}_is_empty", filled == 0,
+               f"{filled} non-zero cells: IBGE now fills this column; revisit how its total is built", severity="warn")
+    ck.add(f"{t}_overlap", True, f"{meta['overlapping_cells_replaced']} cells covered by more than one file "
+           f"(the later file was kept)", meta["overlapping_cells_replaced"])
+    ck.add(f"{t}_{years[-1]}_is_preliminary", False,
+           f"IBGE publishes the newest year ({years[-1]}) as preliminary", years[-1], severity="warn")
+    stale = sidra.stale_preliminary(df, meta["file_years"])
+    ck.add(f"{t}_{years[-1] - 1}_not_from_a_preliminary_export", not stale,
+           f"{years[-1] - 1} was the newest (preliminary) year in {sorted(stale)}; IBGE may have revised it since — "
+           f"re-export {years[-1] - 1}", stale, severity="warn")
 
 
 def _check_corn_consistency(pam: pd.DataFrame, ck: CheckLog) -> None:

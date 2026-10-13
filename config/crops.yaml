@@ -51,6 +51,15 @@ crops:
     area_convention: "temporary — planted area"
     feedstock: null          # no rice residue in the CP2b canonical database (area comparison only)
 
+  cotton:
+    label_en: "Cotton (herbaceous)"
+    mapbiomas_class: [62]               # first-season cotton in the coverage map
+    mapbiomas_second_crop: cotton_2nd   # second-season cotton (second-crop rasters); summed with class 62
+    pam_table: 1612
+    pam_product: "Algodão herbáceo (em caroço)"
+    area_convention: "temporary — planted area, both seasons (PAM does not split cotton by season)"
+    feedstock: null          # no cotton residue in the CP2b canonical database (area comparison only)
+
   corn_2nd:
     label_en: "Second-season corn"
     mapbiomas_second_crop: corn_2nd   # from the second-crop rasters (bbp second-crop)

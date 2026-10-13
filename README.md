@@ -7,6 +7,11 @@ statistics (**IBGE PAM**) — for all 5,571 municipalities, from 2008 onwards,
 and carries the difference through to the theoretical biomethane potential (N1)
 of crop residues.
 
+The same ingest also builds the municipal livestock series (**IBGE PPM**:
+herds, animal products, milked cows, aquaculture) and the full PAM crop tables
+that the PILAR-2b platform's database is built from, so every number the
+platform serves can be regenerated from the raw exports.
+
 Developed at the Centro Paulista de Estudos de Biogás e Bioprodutos (CP2b),
 NIPE – Unicamp, as the reproducible basis of the paper prepared for *Geocarto
 International* (special issue FOSS4G Europe 2026). The data products feed the
@@ -15,7 +20,7 @@ PILAR-2b platform.
 ```
  MapBiomas Col. 11 ─┐                      ┌─ agreement by scale (H1)
  2nd-crop rasters  ─┤                      ├─ divergence predictors (H2)
- IBGE PAM 5457/839 ─┼─ ingest → harmonise → area → reconcile → inventory → publish
+ IBGE PAM · PPM    ─┼─ ingest → harmonise → area → reconcile → inventory → publish
  IBGE mesh 2025    ─┘                                          │          │
  CP2b factors ─────────────────────────────────────────────────┘          └─ CSV · GeoPackage · manifest
 ```
@@ -61,8 +66,8 @@ bbp info
 | `BR_Municipios_2025.shp` | IBGE Malha Municipal 2025 | units, label grid, maps |
 | `MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY.xlsx` | MapBiomas Collection 11 statistics | observed area, 2008–2025 |
 | `*_agriculture_agricultural_use_second_crop_*.tif` | MapBiomas second-crop layer (beta) | observed 2nd-season corn, 2008–2024 |
-| `tabela5457*.csv` | IBGE SIDRA, PAM table 5457 | declared area and production |
-| `PAM_tabela839_milho_por_safra.xlsx` | IBGE SIDRA, PAM table 839 | corn by season |
+| PAM tables 5457, 839, 1612, 1613 (`sidra:` in `pipeline.yaml`) | IBGE SIDRA, Produção Agrícola Municipal | declared area and production, 2008–2025 (2025 preliminary) |
+| PPM tables 3939, 74, 94, 3940 (`sidra:` in `pipeline.yaml`) | IBGE SIDRA, Pesquisa da Pecuária Municipal | herds, animal products, milked cows, aquaculture, 2008–2025 (2025 preliminary) |
 | `config/conversion_factors.yaml` | CP2b canonical parameters | g, TS, VS/TS, BMP (min/ref/max) |
 
 See [`docs/data_sources.md`](docs/data_sources.md) for versions, access dates

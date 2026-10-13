@@ -54,6 +54,24 @@ class Config:
             return [self.raw_root / v for v in value]
         return self.raw_root / value
 
+    def sidra_tables(self) -> dict[int, dict[str, Any]]:
+        """The `sidra` section with each table's files resolved against raw_root."""
+        out = {}
+        for table, spec in (self.raw.get("sidra") or {}).items():
+            files = spec["files"] if isinstance(spec["files"], list) else [spec["files"]]
+            out[int(table)] = {**spec, "files": [self.raw_root / f for f in files]}
+        return out
+
+    def input_files(self) -> list[tuple[str, Path]]:
+        """Every configured input file as (label, path): `inputs` entries, then each SIDRA export."""
+        files: list[tuple[str, Path]] = []
+        for key in self.raw["inputs"]:
+            paths = self.input_path(key)
+            files.extend((key, p) for p in (paths if isinstance(paths, list) else [paths]))
+        for table, spec in self.sidra_tables().items():
+            files.extend((f"sidra_{table}", p) for p in spec["files"])
+        return files
+
     def out(self, *parts: str) -> Path:
         path = self.data_dir.joinpath(*parts)
         path.parent.mkdir(parents=True, exist_ok=True)

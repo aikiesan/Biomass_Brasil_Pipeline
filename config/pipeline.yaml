@@ -14,7 +14,7 @@ data_dir: "data"          # outputs (relative to the repository root)
 
 years:
   start: 2008
-  end: 2025               # MapBiomas Col. 11 reaches 2025; PAM 2025 not yet ingested
+  end: 2025               # MapBiomas Col. 11 and PAM/PPM reach 2025 (2025 is preliminary in PAM/PPM)
 
 inputs:
   municipalities_shp: "00_Primary_Data_Sources_PILAR2b/01_IBGE_Shapefiles/BR_Municipios_2025/BR_Municipios_2025.shp"
@@ -22,16 +22,102 @@ inputs:
   mapbiomas_municipal_xlsx: "MapBiomas_Update_2025_Colecao_11/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY_2025/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY.xlsx"
   mapbiomas_legend_csv: "MapBiomas_Update_2025_Colecao_11/legend_code_mapbiomas_brazil_collection_11.csv"
 
-  # SIDRA table 5457 exported as CSV (one file per block of years; all variables)
-  pam_5457_csv:
-    - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/tabela5457.csv"
-    - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/tabela5457 (1).csv"
-  # SIDRA table 839 (corn by season) exported as XLSX, one sheet per variable
-  pam_839_xlsx: "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/PAM_tabela839_milho_por_safra.xlsx"
 
   second_crop_tif_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Segunda_Safra_TIF"
   # National series exported from the MapBiomas platform; used only as an invariant check
   second_crop_national_csv: "00_Primary_Data_Sources_PILAR2b/11_Analises_Complementares/Milho2_Serasa/Série temporal de Agricultura • Uso agrícola - Segunda safra por classe • 2000 - 2024.csv"
+
+# -----------------------------------------------------------------------------
+# IBGE SIDRA tables (PAM = crops, PPM = livestock), municipal level.
+# Each table: the exports that make up its series (CSV or XLSX, one file per
+# block of years). Where files overlap, the one listed LAST wins, so list the
+# newest export last. `products` (optional) keeps only those columns; without
+# it every product is kept. `exclude_products` drops columns that are not data
+# (e.g. "Total" of table 74 adds litres, dozens and kilograms).
+# IBGE publishes the newest year of every table as PRELIMINARY; the ingest
+# flags it, and warns when the year before it comes from an export in which it
+# was still the newest (i.e. preliminary, possibly revised since).
+# -----------------------------------------------------------------------------
+sidra:
+  5457:
+    survey: PAM
+    description: "Crops (temporary + permanent): area planted or destined for harvest, harvested, production"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/tabela5457.csv"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/tabela5457 (1).csv"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela5457_PAM_2025.xlsx"
+    # the 2008–2024 exports hold only these seven products; the 2025 export holds all 86
+    products: ["Arroz (em casca)", "Café (em grão) Total", "Cana-de-açúcar", "Laranja", "Milho (em grão)",
+               "Soja (em grão)", "Trigo (em grão)"]
+  839:
+    survey: PAM
+    description: "Corn by season (1st / 2nd)"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_CONAB/PAM_tabela839_milho_por_safra.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela839_PAM_2025.xlsx"
+  1612:
+    survey: PAM
+    description: "Temporary crops"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1612_2012_A_2008.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1612_2016_A_2013.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1612_2020_A_2017.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1612_2024_A_2021.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela1612_PAM_2025.xlsx"
+    products: ["Cana-de-açúcar", "Soja (em grão)", "Milho (em grão)", "Arroz (em casca)",
+               "Algodão herbáceo (em caroço)"]
+  1613:
+    survey: PAM
+    description: "Permanent crops"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1613_2008_A_2011.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1613_2012_A_2015.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1613_2016_A_2020.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1613_2020_A_2023.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/PAM_1612_1613_raw/TABELA_1613_2024.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela1613_PAM_2025.xlsx"
+    # Arábica and Canephora are parts of Total: kept for a containment check, never summed
+    products: ["Café (em grão) Total", "Café (em grão) Arábica", "Café (em grão) Canephora", "Laranja"]
+    subsets:
+      - {total: "Café (em grão) Total", parts: ["Café (em grão) Arábica", "Café (em grão) Canephora"]}
+  3939:
+    survey: PPM
+    description: "Herds (head, 31 Dec). 'Suíno - matrizes' and 'Galináceos - galinhas' are subsets of the totals"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/TABELA_3939_PPM_2008A2024.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela3939_PPM_2025.xlsx"
+    # never add a subset to its total. IBGE itself has 4 cases where the subset exceeds the total
+    # (2008–2025: Itaquara-BA 2021 swine; Primavera-PE 2020, Japeri-RJ 2017, Andradina-SP 2023 poultry),
+    # hence "warn": reported, kept as published.
+    subsets:
+      - {total: "Suíno - total", parts: ["Suíno - matrizes de suínos"], severity: warn}
+      - {total: "Galináceos - total", parts: ["Galináceos - galinhas"], severity: warn}
+  74:
+    survey: PPM
+    description: "Animal products (milk, eggs, honey, ...); unit in the product name"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/TABELA_74_2008A2024.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela74_PPM_2025.xlsx"
+    exclude_products: ["Total"]
+  94:
+    survey: PPM
+    description: "Milked cows (head)"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/TABELA_94_VACAS_ORDENHADAS_PPM_2008_A2024.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela94_PPM_2025.xlsx"
+  3940:
+    survey: PPM
+    description: "Aquaculture (from 2013); unit in the product name"
+    files:
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/TABELA_3940_2008A2024.xlsx"
+      - "00_Primary_Data_Sources_PILAR2b/04_IBGE_Tabelas/SIDRA_2025/tabela3940_PPM_2025.xlsx"
+    exclude_products: ["Total"]
+    # the fish aggregate is a header with no data (2013–2024: "Peixes"; 2024+: "Peixes (Quilogramas)"):
+    # fish totals must be summed from the species columns. Warn if IBGE starts filling it.
+    expected_empty: ["Peixes", "Peixes (Quilogramas)"]
+
+# Variables dropped from every SIDRA table (derived from the others)
+sidra_drop_variables: [yield_kg_ha]
 
 mapbiomas:
   collection: 11

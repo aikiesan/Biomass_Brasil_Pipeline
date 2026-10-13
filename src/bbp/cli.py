@@ -60,10 +60,8 @@ def cmd_info(cfg) -> int:
     print(f"raw_root   : {cfg.raw_root}  ({'ok' if cfg.raw_root.exists() else 'MISSING'})")
     print(f"data_dir   : {cfg.data_dir}")
     print(f"years      : {cfg.years[0]}–{cfg.years[-1]}")
-    for key in cfg.raw["inputs"]:
-        paths = cfg.input_path(key)
-        for p in paths if isinstance(paths, list) else [paths]:
-            print(f"  [{'ok' if p.exists() else 'MISSING':7}] {key}: {p}")
+    for key, p in cfg.input_files():
+        print(f"  [{'ok' if p.exists() else 'MISSING':7}] {key}: {p}")
     return 0
 
 
