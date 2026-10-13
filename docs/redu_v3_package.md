@@ -1,0 +1,125 @@
+# REDU V3 — package plan
+
+Version 3.0 of the REDU dataset *Mapeamento e classificação das fontes de
+geração de resíduos nas cadeias agroindustriais e cidades do estado de São
+Paulo para produção de biogás* (Cerejo, Lamparelli, Moraes, Aguiar;
+https://doi.org/10.25824/redu/F36WP9). V2.0 was published on 2026-08-10.
+
+Status: **plan**, agreed with Lucas Cerejo on 2026-10-13. Nothing has been
+built or uploaded yet.
+
+## Decisions (2026-10-13)
+
+| Topic | Decision |
+|---|---|
+| Scope | V3 stays **São Paulo (645 municipalities)** under the same DOI. A national dataset (Brazil, 5,571 municipalities) is a separate deposit, later. |
+| Licence | **CC BY-NC 4.0**, as on the REDU page. Every file says the same (V2's README said CC BY 4.0; V3 corrects it). The bbp code stays GPL-3.0. |
+| Headline | **CP2b v5.1, N3 and N4** (Nm³ CH₄/year, scenario med, with min–max). The Atlas SP 2020 Real/Ideal scenarios of V2 move to the changelog as history. |
+| Authors | Unchanged: Cerejo, Lamparelli, Moraes, Aguiar. |
+| How it is built | By code, from versioned inputs: the deposit is an output of `bbp`, not of one-off scripts. |
+
+## Headline gate
+
+The build fails unless the package reproduces these totals (state, scenario
+med, Nm³ CH₄/year), taken from the CP2b v5.1 platform package
+(`Metodo_CP2b/outputs_v5/plataforma/`, 2026-09-24):
+
+| Level | Nm³ CH₄/year | M Nm³ CH₄/day | min–max (M Nm³/day) |
+|---|---:|---:|---|
+| N1 theoretical | 2.364255e10 | 64.77 | 31.8–117.8 |
+| N2 technical | 1.520756e10 | 41.66 | 18.2–81.7 |
+| **N3 mobilisable** | **7.001868e9** | **19.18** | 7.73–44.96 |
+| **N4 accessible** | **5.971705e9** | **16.36** | 5.16–42.68 |
+
+All volumes are **methane**. Biogas and biomethane are derived equivalents
+(per-substrate CH₄ fraction) and are labelled as such.
+
+## Layout
+
+```
+README.md                 PT + EN: scope, headline (N3/N4), units, base years, what changed since V2
+CHANGELOG_V2_V3.md        every V2 number -> its V3 value and why (Atlas Real/Ideal/Theoretical kept here as history)
+CITATION.txt              the dataset; the software (bbp, with its DOI); MapBiomas and IBGE as required
+data_dictionary.tab       every field of every table (100 %, as in V2)
+CHECKSUMS.csv             SHA-256 of every file inside every archive
+
+01_DATABASE.zip
+  potential/   CP2b v5.1
+    municipality_substrate_levels.csv   645 x 17 substrates x 3 scenarios: N1, N2, N3 (before/after existing use), N4, equivalents
+    municipality_summary.csv            645 x 3: N3, N4 total and by sector (agricultural, livestock, urban)
+    spatial_fl.csv                      FL per municipality x substrate x scenario (variant B and alternatives)
+    parameters.csv                      calculation elements min/med/max with source and status
+    industrial_units.csv                juice plants (in the cascade) and other units of interest (map layer only)
+  activity/    bbp, São Paulo slice, 2008-2025 (2025 = IBGE preliminary)
+    pam.csv, ppm.csv                    IBGE PAM/PPM long, with the SIDRA flag and `preliminary`
+    crop_area.csv                       MapBiomas Collection 11 vs PAM area per municipality x crop x year
+  catalogue/   carried over from V2, updated where they changed
+    residuos.csv, scientific_references.csv, validation_plants.csv, ...
+
+02_GEOSPATIAL.7z
+  V2's 64 layers, MapBiomas updated to Collection 11
+  sp_municipal_v3.gpkg                  2025 mesh (645) joined to N3/N4 (med, min, max)
+  stac/                                 static STAC catalogue of the vector products
+
+03_SUPPLEMENTARY.zip
+  per-municipality verification workbook (N1 -> N4), Table A1 v3
+  evidence/                             bbp invariant checks, parity with the platform, IBGE national-total comparison
+
+04_METADATA.zip
+  canonical_value_sheet_v3.md           the gate above and how each number is reproduced
+  processing_workflow.md                the exact commands that rebuild the package
+  sources_manifest.json                 every input with SHA-256 and where to obtain it
+  base_years.csv, coordinate_systems.md, schema_description.md
+  software.md                           bbp version, git commit, Docker image digest, software DOI
+```
+
+Also uploaded to the Dataverse root as separate files, so that REDU ingests
+them as tabular data (preview, UNF): `municipality_summary.csv` (N3/N4) and
+`data_dictionary.tab`.
+
+## Where each part comes from
+
+| Part | Source | How it enters |
+|---|---|---|
+| `potential/` | `Metodo_CP2b/outputs_v5/plataforma/` (CP2b v5.1, 2026-09-24) | frozen input, checked by SHA-256 (the first 16 hex digits are in the header of `migration_draft_032_cp2b_potential.sql`) and by the gate |
+| `activity/` | `bbp` (`interim/sidra/`, `processed/crop_area`) | filtered to the 645 SP geocodes |
+| `catalogue/`, `02_GEOSPATIAL` | REDU V2 build (`REDU_v2_build/`) | carried over; MapBiomas layers replaced by Collection 11 |
+| `03_SUPPLEMENTARY/evidence/` | `bbp` logs and checks | copied from the release |
+| `04_METADATA` | generated by the build | — |
+
+## Build (planned)
+
+```bash
+bbp publish --profile redu-v3     # writes data/release/redu_v3_<date>/ with the five root files and four archives
+```
+
+The profile:
+
+1. checks the SHA-256 of every frozen input and fails on any mismatch;
+2. builds the tables, archives, dictionary and checksums;
+3. recomputes the headline from `municipality_substrate_levels.csv` and fails
+   unless it matches the gate (relative tolerance 1e-6);
+4. fails if any V2 number listed in `CHANGELOG_V2_V3.md` still appears in a
+   README, description or metadata file outside the changelog;
+5. reopens every archive and verifies it against `CHECKSUMS.csv`.
+
+Upload to REDU stays a manual act by the authors.
+
+## Rules carried over from V2
+
+* Units are always CH₄. A CH₄ volume is never labelled "biogas".
+* IBGE's newest year is marked preliminary in every table that holds it.
+* No Serasa data, in any form.
+* MapBiomas (CC BY 4.0) and IBGE are credited as they require.
+* CRS declared per layer; the municipal mesh is IBGE 2025 with all 645 features.
+
+## Open items
+
+1. REDU's maximum file size (ask redu@unicamp.br); V2's largest file was the
+   272.5 MB geospatial archive.
+2. Re-export IBGE 2024 (all eight SIDRA tables) before the build, so the
+   activity series carries IBGE's revised 2024.
+3. The Dataverse description text must be rewritten: V2's describes the
+   Atlas scenarios.
+4. 11 of the 17 substrates still have provisional parameters (54.0 % of N4);
+   `parameters.csv` carries the status per element, and the README says so.
