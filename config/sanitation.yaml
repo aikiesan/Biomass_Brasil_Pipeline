@@ -1,0 +1,121 @@
+# =============================================================================
+# Municipal sanitation: one harmonised variable per quantity, whichever survey
+# measured it
+# =============================================================================
+# The federal sanitation survey changed system in the middle of the series:
+#
+#   SNIS   — Sistema Nacional de Informações sobre Saneamento, reference years
+#            up to 2022. Fields are coded CO### (waste collection), CS###
+#            (selective collection), ES### (sewage), POP_* (population).
+#   SINISA — Sistema Nacional de Informações em Saneamento Básico, reference
+#            years from 2023. Fields are coded GTR#### (waste), GTE#### (sewage),
+#            DFE#### (population, from IBGE).
+#
+# The two do not share field codes. SINISA's indicator glossary lists, for each
+# SINISA indicator, the "INDICADOR CORRESPONDENTE OU SIMILAR NO SNIS"; an
+# indicator pair whose numerators are these two fields is the evidence that the
+# fields measure the same quantity. Each entry records that evidence.
+#
+#   match: equivalent  — same quantity by definition (the glossary pairs the
+#                        indicators built on them, or both are IBGE figures)
+#          similar     — same intent, different scope (noted in `scope`);
+#                        series continuity is checked, not assumed
+#
+# `sinisa.module` names the SINISA workbook the field is read from (`waste` or
+# `sewage`, see `sanitation.sinisa` in pipeline.yaml). Population is read from
+# the waste workbook only, which lists every municipality.
+#
+# Units are as published: solid waste in tonnes per year, sewage volumes in
+# 1,000 m³ per year, population in inhabitants.
+# =============================================================================
+
+variables:
+  msw_collected_t:
+    description: "Urban solid waste collected: household + public cleaning"
+    unit: t/yr
+    snis: CO119
+    sinisa: {field: GTR1028, module: waste}
+    match: equivalent
+    evidence: "SINISA indicator glossary 2024: IRS1004 = GTR1028 / DFE0001, paired with SNIS IN028 (= CO119 / POP_TOT)"
+
+  household_collected_t:
+    description: "Household waste collected"
+    unit: t/yr
+    snis: CO111
+    sinisa: {field: GTR1025, module: waste}
+    match: similar
+    evidence: "SINISA indicator glossary 2024: IRS1005 (GTR1025) paired with SNIS IN022 (CO111)"
+    scope: "GTR1025 sums every household route, selective-collection routes included (route types 1, 3, 4)"
+
+  public_cleaning_collected_t:
+    description: "Public-cleaning waste collected (street sweeping, green areas, ...)"
+    unit: t/yr
+    snis: CO115
+    sinisa: {field: GTR1027, module: waste}
+    match: similar
+    evidence: "GTR1028 = GTR1025 + GTR1027 and CO119 = CO111 + CO115; the glossary gives no SNIS pair for IRS1006 (GTR1027)"
+    scope: "GTR1027 includes green-area routes (pruning), route types 2, 5, 6"
+
+  selective_collected_t:
+    description: "Waste collected by selective collection"
+    unit: t/yr
+    snis: CS026
+    sinisa: {field: GTR1026, module: waste}
+    match: similar
+    evidence: "SINISA indicator glossary 2024: IRS1007 (GTR1026) paired with SNIS IN054 (CS026)"
+    scope: "GTR1026 includes selective collection of organics (route type 4)"
+
+  recovered_t:
+    description: "Material recovered from household waste"
+    unit: t/yr
+    snis: CS009
+    sinisa: {field: GTR1029, module: waste}
+    match: similar
+    evidence: "SINISA indicator glossary 2024: IRS1008 (GTR1029) paired with SNIS IN032 (CS009)"
+    scope: "GTR1029 is dry recyclables + organics; CS009 is dry recyclables only"
+
+  # SNIS only: SINISA reports recyclables by material per collection route, not per municipality
+  recovered_paper_t:     {description: "Recovered paper and cardboard", unit: t/yr, snis: CS010, sinisa: null, match: snis_only}
+  recovered_plastic_t:   {description: "Recovered plastics",            unit: t/yr, snis: CS011, sinisa: null, match: snis_only}
+  recovered_metal_t:     {description: "Recovered metals",              unit: t/yr, snis: CS012, sinisa: null, match: snis_only}
+  recovered_glass_t:     {description: "Recovered glass",               unit: t/yr, snis: CS013, sinisa: null, match: snis_only}
+
+  sewage_collected_1000m3:
+    description: "Sewage collected"
+    unit: 1000 m3/yr
+    snis: ES005
+    sinisa: {field: GTE1002, module: sewage}
+    match: equivalent
+    evidence: "Field definitions match (\"Volume de esgoto coletado\"); municipal base consolidates every provider"
+
+  sewage_treated_1000m3:
+    description: "Sewage treated"
+    unit: 1000 m3/yr
+    snis: ES006
+    sinisa: {field: GTE1014, module: sewage}
+    match: equivalent
+    evidence: "SINISA sewage indicator glossary 2024: IES2003 (GTE1014) paired with SNIS IN046 (ES006)"
+
+  population_total:
+    description: "Resident population"
+    unit: inhabitants
+    snis: POP_TOT
+    sinisa: {field: DFE0001, module: waste}
+    match: equivalent
+    evidence: "Both surveys copy the IBGE figure"
+
+  population_urban:
+    description: "Urban resident population"
+    unit: inhabitants
+    snis: POP_URB
+    sinisa: {field: DFE0002, module: waste}
+    match: equivalent
+    evidence: "Both surveys copy the IBGE figure"
+
+# Identities the published data must satisfy (checked per survey and year).
+# A row breaks one when |total − sum(parts)| > 1 % of the parts; reported, kept as published.
+identities:
+  snis:
+    - {total: CO119, parts: [CO111, CO115]}
+  sinisa:
+    - {total: GTR1028, parts: [GTR1025, GTR1027]}

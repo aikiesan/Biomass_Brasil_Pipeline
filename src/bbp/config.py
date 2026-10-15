@@ -35,6 +35,7 @@ class Config:
     crops: dict[str, Any] = field(default_factory=dict)
     factors: dict[str, Any] = field(default_factory=dict)
     changes: dict[str, Any] = field(default_factory=dict)
+    sanitation: dict[str, Any] = field(default_factory=dict)
 
     # ---- paths -------------------------------------------------------------
     @property
@@ -62,14 +63,38 @@ class Config:
             out[int(table)] = {**spec, "files": [self.raw_root / f for f in files]}
         return out
 
+    def snis_files(self) -> dict[int, Path | None]:
+        """{year: SNIS export} for every year of `sanitation.snis.years`; None where no file matches."""
+        spec = (self.raw.get("sanitation") or {}).get("snis")
+        if not spec:
+            return {}
+        folder, (first, last) = self.raw_root / spec["dir"], spec["years"]
+        out: dict[int, Path | None] = {}
+        for year in range(int(first), int(last) + 1):
+            hits = sorted(folder.glob(spec["pattern"].format(year=year))) if folder.is_dir() else []
+            out[year] = hits[-1] if hits else None
+        return out
+
+    def sinisa_years(self) -> dict[int, dict[str, Any]]:
+        """`sanitation.sinisa` with every workbook path resolved against raw_root."""
+        out = {}
+        for year, spec in ((self.raw.get("sanitation") or {}).get("sinisa") or {}).items():
+            out[int(year)] = {k: ({**v, "file": self.raw_root / v["file"]} if isinstance(v, dict) and "file" in v else v)
+                              for k, v in spec.items()}
+        return out
+
     def input_files(self) -> list[tuple[str, Path]]:
-        """Every configured input file as (label, path): `inputs` entries, then each SIDRA export."""
+        """Every configured input file as (label, path): `inputs` entries, each SIDRA export, then the
+        sanitation sources."""
         files: list[tuple[str, Path]] = []
         for key in self.raw["inputs"]:
             paths = self.input_path(key)
             files.extend((key, p) for p in (paths if isinstance(paths, list) else [paths]))
         for table, spec in self.sidra_tables().items():
             files.extend((f"sidra_{table}", p) for p in spec["files"])
+        files.extend((f"snis_{y}", p) for y, p in self.snis_files().items() if p is not None)
+        for year, spec in self.sinisa_years().items():
+            files.extend((f"sinisa_{year}_{k}", v["file"]) for k, v in spec.items() if isinstance(v, dict) and "file" in v)
         return files
 
     def out(self, *parts: str) -> Path:
@@ -94,10 +119,12 @@ def load_config(config_dir: Path | None = None) -> Config:
     local = config_dir / "paths.local.yaml"
     if local.exists():
         raw = _deep_update(raw, _read_yaml(local))
+    sanitation = config_dir / "sanitation.yaml"
     return Config(
         raw=raw,
         repo_root=repo_root,
         crops=_read_yaml(config_dir / "crops.yaml")["crops"],
         factors=_read_yaml(config_dir / "conversion_factors.yaml"),
         changes=_read_yaml(config_dir / "municipality_changes.yaml"),
+        sanitation=_read_yaml(sanitation) if sanitation.exists() else {},
     )

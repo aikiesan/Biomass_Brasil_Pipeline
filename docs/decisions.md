@@ -6,6 +6,10 @@ One line per decision, newest first. Open items are at the end.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-15 | SNIS 2008–2022 and SINISA 2023–2024 ingested by a separate `sanitation` stage into one table on harmonised variables (`config/sanitation.yaml`), loaded as `bbp.sanitation` | One parser and one set of checks for the urban series across the 2023 survey change; PILAR-2b reads `bbp.v_sanitation` as it reads `v_sidra` |
+| 2026-10-15 | Field pairs SNIS↔SINISA justified by SINISA's own glossary (indicator ↔ "similar no SNIS"), labelled `equivalent` / `similar`; continuity measured, never assumed | The surveys share no codes; a silent 1:1 mapping would hide scope changes (e.g. GTR1025 includes selective routes) |
+| 2026-10-15 | SNIS identity breaks (15 municipality-years, CO119 ≠ CO111 + CO115) and SINISA's (2 in 2024) kept as published, reported as warnings | Source data-entry errors; not ours to correct |
+| 2026-10-15 | Sanitation is a platform feed, outside the paper's scope | The paper is about crop activity data (H1–H3) |
 | 2026-10-13 | All SIDRA tables in one `sidra:` registry; exports listed in order, the later one wins on overlap | One reader for PAM and PPM; a new year is one more file, not a re-export of the series |
 | 2026-10-13 | PAM/PPM 2025 (exported 2026-10-13) included and flagged `preliminary` | IBGE marks the newest year as preliminary; flag rather than wait a year |
 | 2026-10-13 | PPM 3939/74/94/3940 and PAM 1612/1613 ingested | The same pipeline rebuilds the PILAR-2b municipal series (crops and livestock) |

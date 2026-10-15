@@ -134,3 +134,37 @@ are planned (see `decisions.md`).
   and the OAT widths. Rank shift: Spearman ρ and top-decile turnover of total
   municipal N1, using only municipality × crop cells present in both variants.
 * National N1 totals are computed but are **not** a result of the paper.
+
+## 7. Municipal sanitation (platform feed, not part of the paper)
+
+`bbp run sanitation` builds one series of urban solid waste, sewage and
+population per municipality from the two federal sanitation surveys. It feeds
+the PILAR-2b platform (`bbp.v_sanitation`); no crop stage reads it.
+
+* **Sources.** SNIS "Consolidado por Município" 2008–2022 (one CSV per year)
+  and SINISA 2023–2024 (waste module: *Formulário Manejo*, municipal sheet;
+  sewage module: *Gestão Técnica de Esgoto*, municipal base). SINISA replaced
+  SNIS from reference year 2023; the two share no field codes.
+* **Harmonised variables.** `config/sanitation.yaml` maps one field of each
+  survey onto each variable (e.g. SNIS CO119 and SINISA GTR1028 →
+  `msw_collected_t`) and records the evidence: the SNIS indicator that
+  SINISA's glossary pairs with the SINISA indicator built on that field.
+  Pairs are `equivalent` (same quantity) or `similar` (same intent, different
+  scope, written down); four SNIS fields have no SINISA counterpart per
+  municipality (`snis_only`).
+* **Keys.** SNIS is keyed by the 6-digit municipality code in every year (its
+  7-digit column is empty before ~2019); the code is resolved through the
+  mesh, whose 6-digit prefixes are unique. SINISA is keyed by the 7-digit code.
+* **Blank is not zero.** Reporting is voluntary; only reported cells become
+  rows. A reported zero stays a zero.
+* **Checks.** Municipal sums reproduce each survey's own totals: SNIS's
+  "TOTAL da AMOSTRA" row (population, CO111, CO119, ES006) and SINISA's
+  consolidated UF / macro-region / Brazil sewage sheets (GTE1002, GTE1014), to
+  1 %. The number of SINISA waste respondents equals the one in SINISA's
+  report. CO119 = CO111 + CO115 and GTR1028 = GTR1025 + GTR1027 are checked;
+  breaks are reported and kept as published.
+* **Series break.** For every variable both surveys measure,
+  `sanitation_continuity` compares the last SNIS year with the first SINISA
+  year over the municipalities that report both: median and p10/p90 of the
+  ratio SINISA/SNIS, ratio of totals, share within ±25 %. A median outside
+  `continuity_band` (0.8–1.25) is a warning.

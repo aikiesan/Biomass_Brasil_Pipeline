@@ -190,6 +190,154 @@ def _check_corn_consistency(pam: pd.DataFrame, ck: CheckLog) -> None:
 
 
 # ---------------------------------------------------------------------------
+# sanitation (SNIS to 2022, SINISA from 2023) — urban waste and sewage
+# ---------------------------------------------------------------------------
+def _cached(cfg: Config, name: str, sources: list[Path], force: bool, build) -> tuple[pd.DataFrame, dict]:
+    """interim/sanitation/<name>.parquet + .meta.json, rebuilt when a source is newer."""
+    out = cfg.out("interim", "sanitation", f"{name}.parquet")
+    meta_path = out.with_suffix(".meta.json")
+    if force or not (_is_fresh(out, sources) and meta_path.exists()):
+        df, meta = build()
+        _write(df, cfg, "interim", "sanitation", f"{name}.parquet")
+        meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    return pd.read_parquet(out), json.loads(meta_path.read_text(encoding="utf-8"))
+
+
+def _published_check(ck: CheckLog, name: str, ours: dict, published: dict, tol: float) -> None:
+    """Municipal sums vs the survey's own totals, for every unit and field both sides have."""
+    diffs = []
+    for unit, fields in published.items():
+        for f, pub in fields.items():
+            got = ours.get(unit, {}).get(f)
+            if pub and got is not None:
+                diffs.append((abs(got - pub) / abs(pub), unit, f, got, pub))
+    if not diffs:
+        ck.add(name, False, "no comparable totals")
+        return
+    worst = max(diffs)
+    bad = [d for d in diffs if d[0] > tol]
+    ck.add(name, not bad, f"{len(diffs)} totals compared, {len(bad)} off by more than {tol:.1%}; worst "
+           f"{worst[1]} {worst[2]}: ours {worst[3]:,.2f} vs published {worst[4]:,.2f} ({worst[0]:.3%})",
+           [list(d[1:3]) + [round(d[0], 6)] for d in sorted(bad, reverse=True)[:20]])
+
+
+def stage_sanitation(cfg: Config, ck: CheckLog, force: bool = False) -> None:
+    from bbp.ingest import sanitation as san
+
+    spec = cfg.section("sanitation")
+    if not spec or not cfg.sanitation:
+        ck.add("sanitation_configured", False, "no `sanitation` in pipeline.yaml or no config/sanitation.yaml",
+               severity="warn")
+        return
+    xw = san.crosswalk(cfg.sanitation["variables"])
+    identities = cfg.sanitation.get("identities", {})
+    tol = float(spec.get("published_tolerance", 0.01))
+    mesh = _read(cfg, "interim", "municipalities.parquet")
+    mesh = mesh[mesh["is_municipality"]]
+    uf_of = mesh.set_index("geocode")["uf"]
+    region_of = mesh.set_index("geocode")["region"]
+    mesh_codes = set(mesh["geocode"])
+    by_code6 = san.code6_index(mesh_codes)
+    ck.add("mesh_code6_prefixes_unique", True, f"{len(by_code6)} municipalities")
+    long = []
+
+    def common_checks(t: str, df: pd.DataFrame, meta: dict) -> None:
+        ck.add(f"{t}_fields_present", not meta["missing_fields"], f"absent: {meta['missing_fields']}",
+               meta["missing_fields"], severity="warn")
+        ck.add(f"{t}_all_values_parsed", meta["n_unparsed"] == 0, f"{meta['n_unparsed']} unparsed cells",
+               meta["unparsed"])
+        neg = df[df["value"] < 0]
+        ck.add(f"{t}_non_negative", neg.empty, f"{len(neg)} negative values (kept as published)",
+               neg[["geocode", "field", "value"]].head(20).values.tolist(), severity="warn")
+
+    # ---- SNIS -----------------------------------------------------------------
+    snis_ids = [f for i in identities.get("snis", []) for f in (i["total"], *i["parts"])]
+    snis_fields = san.fields_for(xw, "SNIS", "snis", [*snis_ids, "POP_TOT"])
+    for year, path in cfg.snis_files().items():
+        t = f"snis_{year}"
+        if not ck.add(f"{t}_file_exists", path is not None, f"no file matching {spec['snis']['pattern']}"):
+            continue
+        df, meta = _cached(cfg, t, [path], force, lambda p=path, y=year: san.read_snis(p, y, snis_fields))
+        df["geocode"] = df["code6"].map(by_code6)
+        unresolved = sorted(df.loc[df["geocode"].isna(), "code6"].unique().tolist())
+        ck.add(f"{t}_codes_resolve_to_mesh", not unresolved, f"{len(unresolved)} 6-digit codes not in the mesh",
+               unresolved[:20])
+        df = df.dropna(subset=["geocode"]).astype({"geocode": "int64"})
+        dup = int(df.duplicated(["geocode", "field"]).sum())
+        ck.add(f"{t}_one_row_per_municipality", dup == 0, f"{dup} duplicated cells")
+        common_checks(t, df, meta)
+        ck.add(f"{t}_one_total_row", meta["summary_rows"] == 1, f"{meta['summary_rows']} 'TOTAL da AMOSTRA' rows")
+        ours = san.sums_by_uf(df, uf_of, list(meta["totals"]))
+        _published_check(ck, f"{t}_matches_its_total_row", ours,
+                         {"BR": {f: v for f, v in meta["totals"].items() if f in ("POP_TOT", "CO111", "CO119", "ES006")}},
+                         tol)
+        for ident in identities.get("snis", []):
+            bad = san.identity_breaks(df, ident["total"], ident["parts"])
+            ck.add(f"{t}_{ident['total']}_equals_{'+'.join(ident['parts'])}", bad.empty,
+                   f"{len(bad)} municipalities where SNIS's own total differs from its parts (kept as published)",
+                   bad.reset_index()[["geocode"]].values.ravel().tolist()[:20], severity="warn")
+        long.append(df.assign(survey="SNIS", module="snis")[san.COLUMNS])
+
+    # ---- SINISA ---------------------------------------------------------------
+    sinisa_ids = [f for i in identities.get("sinisa", []) for f in (i["total"], *i["parts"])]
+    for year, ys in cfg.sinisa_years().items():
+        for module in ("waste", "sewage"):
+            t = f"sinisa_{year}_{module}"
+            src = ys.get(module)
+            if not ck.add(f"{t}_file_exists", src is not None and src["file"].exists(),
+                          f"missing: {src and src['file']}"):
+                continue
+            fields = san.fields_for(xw, "SINISA", module, sinisa_ids if module == "waste" else [])
+            df, meta = _cached(cfg, t, [src["file"]], force,
+                               lambda s=src, y=year, f=fields: san.read_sinisa(s["file"], s["sheet"], y, f))
+            outside = sorted(set(df["geocode"]) - mesh_codes)
+            ck.add(f"{t}_geocodes_in_mesh", not outside, f"{len(outside)} not in the mesh", outside[:20])
+            ck.add(f"{t}_one_row_per_municipality", meta["duplicates"] == 0,
+                   f"{meta['rows']} rows, {meta['duplicates']} duplicated geocodes")
+            common_checks(t, df, meta)
+            if module == "waste":
+                expected = ys.get("waste_respondents")
+                ck.add(f"{t}_respondents", expected is None or meta["respondents"] == expected,
+                       f"{meta['respondents']} municipalities answered the module; SINISA reports {expected}",
+                       meta["respondents"])
+                for ident in identities.get("sinisa", []):
+                    bad = san.identity_breaks(df, ident["total"], ident["parts"])
+                    ck.add(f"{t}_{ident['total']}_equals_{'+'.join(ident['parts'])}", bad.empty,
+                           f"{len(bad)} municipalities where SINISA's own total differs from its parts "
+                           "(kept as published)", bad.reset_index()[["geocode"]].values.ravel().tolist()[:20],
+                           severity="warn")
+            pub = ys.get(f"{module}_published")
+            if pub is not None:
+                if ck.add(f"{t}_published_file_exists", pub["file"].exists(), f"missing: {pub['file']}"):
+                    published = san.read_sinisa_published(pub["file"], pub["sheet"], fields)
+                    _published_check(ck, f"{t}_matches_published_consolidation",
+                                     san.sums_by_uf(df, uf_of, fields, region_of), published, tol)
+            long.append(df.assign(survey="SINISA", module=module)[san.COLUMNS])
+
+    if not long:
+        ck.add("sanitation_has_data", False, "no SNIS or SINISA year could be read")
+        return
+    h = san.harmonise(pd.concat(long, ignore_index=True), xw)
+    dup = int(h.duplicated(["geocode", "year", "variable"]).sum())
+    ck.add("sanitation_one_value_per_municipality_year_variable", dup == 0, f"{dup} duplicates")
+    years = sorted(h["year"].unique().tolist())
+    ck.add("sanitation_years_contiguous", years == list(range(years[0], years[-1] + 1)),
+           f"{years[0]}–{years[-1]}", years)
+    _write(h, cfg, "processed", "sanitation.parquet")
+    cont = san.continuity(h)
+    _write(cont, cfg, "processed", "sanitation_continuity.parquet")
+    lo, hi = spec.get("continuity_band", [0.8, 1.25])
+    for r in cont.itertuples():
+        ck.add(f"sanitation_continuity_{r.variable}", lo <= r.median_ratio <= hi,
+               f"{r.n_both} municipalities report both {r.snis_year} (SNIS) and {r.sinisa_year} (SINISA): "
+               f"median ratio {r.median_ratio:.3f} (p10 {r.p10_ratio:.3f}, p90 {r.p90_ratio:.3f}), "
+               f"ratio of totals {r.ratio_of_totals:.3f}, {r.share_within_25pct:.0%} within ±25 %",
+               round(float(r.median_ratio), 4), severity="warn")
+    summary = h.groupby(["variable", "year"], observed=True).size().unstack("year")
+    log.info("Sanitation: municipalities reporting each variable per year\n%s", summary.to_string())
+
+
+# ---------------------------------------------------------------------------
 # second crop (raster) — separate command because it runs for hours
 # ---------------------------------------------------------------------------
 def stage_second_crop(cfg: Config, ck: CheckLog, years: list[int] | None = None, grid_only: bool = False) -> None:
@@ -376,6 +524,7 @@ def stage_publish(cfg: Config, ck: CheckLog) -> Path:
 
 STAGE_FUNCS = {
     "ingest": stage_ingest,
+    "sanitation": stage_sanitation,
     "harmonise": stage_harmonise,
     "area": stage_area,
     "reconcile": stage_reconcile,
