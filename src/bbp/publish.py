@@ -24,6 +24,7 @@ log = logging.getLogger("bbp")
 TABLES = [
     "municipality_attributes", "crop_area", "agreement_by_scale", "unit_ratios_municipality", "unit_ratios_rgint",
     "unit_ratios_uf", "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
+    "sanitation", "sanitation_continuity",
 ]
 
 
@@ -125,6 +126,9 @@ def publish(cfg: Config, ck: CheckLog) -> Path:
                          "second-crop (beta) layer, accessed via mapbiomas.org.",
             "IBGE": "IBGE — Produção Agrícola Municipal (PAM), SIDRA tables 5457, 839, 1612, 1613; Pesquisa da Pecuária Municipal (PPM), tables 3939, 74, 94, 3940; Malha Municipal 2025.",
             "CP2b": "Conversion factors from the CP2b canonical parameter set (FAPESP 2024/01112-1).",
+            "Ministério das Cidades": "SNIS — Sistema Nacional de Informações sobre Saneamento, série histórica "
+                                      "(Consolidado por Município), 2008–2022; SINISA — Sistema Nacional de "
+                                      "Informações em Saneamento Básico, waste and sewage modules, 2023–2024.",
         },
     }
     with open(rel / "manifest.json", "w", encoding="utf-8") as fh:

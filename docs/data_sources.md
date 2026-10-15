@@ -19,6 +19,10 @@ a later run can prove it used the same bytes.
 | IBGE PPM animal products | `TABELA_74_2008A2024.xlsx`, `SIDRA_2025/tabela74_PPM_2025.xlsx` | SIDRA table 74 | 2025 file: 2026-10-13 | units in the product name; "Total" not ingested |
 | IBGE PPM milked cows | `TABELA_94_VACAS_ORDENHADAS_PPM_2008_A2024.xlsx`, `SIDRA_2025/tabela94_PPM_2025.xlsx` | SIDRA table 94 | 2025 file: 2026-10-13 | no product dimension |
 | IBGE PPM aquaculture | `TABELA_3940_2008A2024.xlsx` (2013–2024), `SIDRA_2025/tabela3940_PPM_2025.xlsx` | SIDRA table 3940 | 2025 file: 2026-10-13 | fish aggregate empty: sum the species |
+| SNIS série histórica | `03_SNIS_Series/{year}_SNIS_ConsolidadoMunicipio-20260716124911.csv` | 2008–2022, "Consolidado por Município" | 2026-07-16 | UTF-16-LE, `;`, Brazilian numbers; 6-digit municipality key; last row = "TOTAL da AMOSTRA" (used as a check) |
+| SINISA waste (resíduos sólidos) | `12_SINISA/{2023,2024}/residuos/SINISA_RESIDUOS_Informacoes_Formulario_Manejo_{year}.xlsx`, sheet `Manejo_Resíduos_Sólidos_Urbanos` | reference years 2023 (generated 18/03/2025) and 2024 | 2026-10-15 (re-download) | code row 13; non-respondents carry `null`; respondents 4,778 (2023) and 4,854 (2024) |
+| SINISA sewage (esgotamento sanitário) | `12_SINISA/{year}/esgoto/base_municipal/…Gestão Técnica de Esgoto…_Base Municipal_{year}.xlsx` + `consolidado_uf_mr_br/` | reference years 2023 (V2) and 2024 | 2026-10-15 (re-download) | 1,000 m³/yr; the UF/MR/BR workbook checks the municipal sums |
+| SINISA glossaries | `12_SINISA/glossario/Glossario_{Indicadores,Informacoes}_SINISA_2024.pdf` | 2024 (waste) | 2026-10-15 | evidence for the SNIS↔SINISA pairs in `config/sanitation.yaml` |
 | CP2b conversion factors | `conversion_factors.yaml` (copy of canonical v1.0 + Método CP2b v5.1) | — | — | `bbp check-factors` compares with the canonical YAML |
 
 ## Re-exporting SIDRA tables
@@ -50,3 +54,11 @@ CSV or XLSX. The parser also reads tables with no product dimension (e.g. 94).
 * PAM 2025: Divinópolis de Goiás (5208301) has no statistics ("...") for 2025.
 * The 2024 values of every table come from exports in which 2024 was the
   newest, preliminary year: re-export 2024 (decisions, open item 8).
+* SNIS: CO119 ≠ CO111 + CO115 in 15 municipality-years (2008: 3, 2009: 6, 2010: 3,
+  2014: 1, 2021: 2), e.g. Presidente Prudente-SP 2009 (CO111 1,416 vs CO119 72,468) —
+  reported, kept as published.
+* SINISA 2024: GTR1028 ≠ GTR1025 + GTR1027 in 2 municipalities — reported, kept as published.
+* SNIS 2022 has no POP_URB; `population_urban` stops at 2021 on the SNIS side.
+* The 2024 SINISA sewage base covers fewer municipalities (3,903) than 2023 (4,249).
+* Not used: SINISA disposal-unit fields GTR3235/GTR3236 (biomethane, electricity: 25–31 rows,
+  implausible magnitudes) and GTR3223 (2023 sum inflated by double counting across units).

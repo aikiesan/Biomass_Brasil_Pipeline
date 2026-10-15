@@ -119,6 +119,45 @@ sidra:
 # Variables dropped from every SIDRA table (derived from the others)
 sidra_drop_variables: [yield_kg_ha]
 
+# -----------------------------------------------------------------------------
+# Municipal sanitation (urban solid waste, sewage): SNIS to 2022, SINISA from
+# 2023. Which field of each survey feeds which variable is in
+# config/sanitation.yaml. `bbp run sanitation` builds one harmonised series.
+# -----------------------------------------------------------------------------
+sanitation:
+  snis:
+    # "Consolidado por Município" exports of the SNIS série histórica (UTF-16, ';')
+    dir: "00_Primary_Data_Sources_PILAR2b/03_SNIS_Series"
+    pattern: "{year}_SNIS_ConsolidadoMunicipio-*.csv"
+    years: [2008, 2022]
+  sinisa:
+    # one entry per reference year. `waste` and `sewage` are the municipal workbooks;
+    # `sewage_published` is SINISA's own UF / macro-region / Brazil consolidation, used
+    # to check the municipal sums; `waste_respondents` is the number of municipalities
+    # SINISA reports as participants of the waste module.
+    2023:
+      waste: {file: "00_Primary_Data_Sources_PILAR2b/12_SINISA/2023/residuos/SINISA_RESIDUOS_Informacoes_Formulario_Manejo_2023.xlsx",
+              sheet: "Manejo_Resíduos_Sólidos_Urbanos"}
+      sewage: {file: "00_Primary_Data_Sources_PILAR2b/12_SINISA/2023/esgoto/base_municipal/SINISA_ESGOTO_Informacoes_Gestao Tecnica Esgoto_Base Municipal_2023_V2.xlsx",
+               sheet: "Gestão Técnica de Esgoto"}
+      sewage_published: {file: "00_Primary_Data_Sources_PILAR2b/12_SINISA/2023/esgoto/consolidado_uf_mr_br/SINISA_ESGOTO_Informacoes_Gestao Tecnica Esgoto_UF_Macrorregiao_Brasil_2023_V2.xlsx",
+                         sheet: "Gestão Técnica de Esgoto"}
+      waste_respondents: 4778   # SINISA waste report 015 (ref. 2023), p. 17
+    2024:
+      waste: {file: "00_Primary_Data_Sources_PILAR2b/12_SINISA/2024/residuos/SINISA_RESIDUOS_Informacoes_Formulario_Manejo_2024.xlsx",
+              sheet: "Manejo_Resíduos_Sólidos_Urbanos"}
+      sewage: {file: "00_Primary_Data_Sources_PILAR2b/12_SINISA/2024/esgoto/base_municipal/SINISA_ESGOTO_Informações_Gestão Técnica de Esgoto_Base Municipal_2024.xlsx",
+               sheet: "Gestão Técnica de Esgoto"}
+      sewage_published: {file: "00_Primary_Data_Sources_PILAR2b/12_SINISA/2024/esgoto/consolidado_uf_mr_br/SINISA_ESGOTO_Informações_Gestão Técnica de Esgoto_UF_MR_BR_2024.xlsx",
+                         sheet: "Gestão Técnica de Esgoto"}
+      waste_respondents: 4854   # SINISA waste report 010 (ref. 2024), p. 18
+  # municipal sums vs SINISA's consolidation, and SNIS municipal sums vs its own
+  # "TOTAL da AMOSTRA" row: allowed relative difference
+  published_tolerance: 0.01
+  # series break SNIS -> SINISA: municipalities reporting both in the last SNIS and the
+  # first SINISA year. Warn when the median ratio SINISA/SNIS leaves this band.
+  continuity_band: [0.8, 1.25]
+
 mapbiomas:
   collection: 11
   sheet: "COVERAGE_11"
@@ -166,3 +205,4 @@ database:
   # 5457 and 839 reach the database through crop_area; production value is not used.
   sidra_tables: [1612, 1613, 3939, 74, 94, 3940]
   sidra_exclude_variables: [value_thousand_brl]
+  # processed/sanitation.parquet goes to bbp.sanitation (view bbp.v_sanitation)

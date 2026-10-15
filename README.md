@@ -69,6 +69,8 @@ bbp info
 | PAM tables 5457, 839, 1612, 1613 (`sidra:` in `pipeline.yaml`) | IBGE SIDRA, Produção Agrícola Municipal | declared area and production, 2008–2025 (2025 preliminary) |
 | PPM tables 3939, 74, 94, 3940 (`sidra:` in `pipeline.yaml`) | IBGE SIDRA, Pesquisa da Pecuária Municipal | herds, animal products, milked cows, aquaculture, 2008–2025 (2025 preliminary) |
 | `config/conversion_factors.yaml` | CP2b canonical parameters | g, TS, VS/TS, BMP (min/ref/max) |
+| SNIS `{year}_SNIS_ConsolidadoMunicipio-*.csv` (`sanitation:` in `pipeline.yaml`) | Ministério das Cidades, SNIS série histórica | urban waste, sewage, population, 2008–2022 |
+| SINISA waste and sewage workbooks (`sanitation:` in `pipeline.yaml`) | Ministério das Cidades, SINISA | the same series from 2023 (replaces SNIS); field pairs in `config/sanitation.yaml` |
 
 See [`docs/data_sources.md`](docs/data_sources.md) for versions, access dates
 and how to re-export the SIDRA tables.
@@ -77,6 +79,7 @@ and how to re-export the SIDRA tables.
 
 ```bash
 bbp run ingest                 # parse every source once into data/interim/
+bbp run sanitation             # SNIS + SINISA -> one urban waste / sewage series (platform feed)
 bbp second-crop                # raster zonal statistics (long; resumable; run once per new raster year)
 bbp run --from harmonise       # harmonise → area → reconcile → inventory → publish
 ```
@@ -121,6 +124,8 @@ Unicamp VM (SSH tunnel) and the read-only role.
 | `n1_municipal` | municipality × year × crop × variant | N1 (Nm³ CH₄/yr) at ref/min/max and one-at-a-time bounds |
 | `source_vs_factor_effect` | crop × year | \|ln(N1_obs/N1_dec)\| vs ln(N1_max/N1_min) and per-factor widths |
 | `rank_shift` | year | Spearman ρ and top-decile turnover of the municipal N1 ranking |
+| `sanitation` | municipality × year × variable | urban waste, sewage, population on harmonised variables; `survey` = SNIS (≤ 2022) or SINISA (≥ 2023), `field`, `match` |
+| `sanitation_continuity` | variable | the SNIS → SINISA break: last SNIS year vs first SINISA year over municipalities reporting both |
 
 `bbp run publish` writes `data/release/bbp_v<version>_<date>/` with gzipped CSVs,
 a GeoPackage for the latest common year and `manifest.json` (git commit,
@@ -130,7 +135,7 @@ deposit on Zenodo/REDU.
 ## Repository layout
 
 ```
-config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml
+config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml · sanitation.yaml
 src/bbp/      ingest/ (sources) · harmonise · area · reconcile · inventory · publish · checks · cli
 tests/        synthetic-data unit tests (run in CI; no source data needed)
 docs/         methods · data sources · decisions log · deployment
@@ -141,7 +146,9 @@ data/         generated, git-ignored
 
 ## Scope
 
-In: crop *stocks* per year (area, production) and N1 for crop residues.
+In: crop *stocks* per year (area, production) and N1 for crop residues. Also
+built here for the PILAR-2b platform, outside the paper: the municipal
+sanitation series (SNIS → SINISA).
 Out (other CP2b work): the N2–N4 availability cascade, logistics and hubs
 (ESD paper); land-use transitions and iLUC matrices (ABIOVE project).
 

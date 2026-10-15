@@ -56,6 +56,9 @@ TABLES: dict[str, tuple[list[str], list[str]]] = {
     # IBGE SIDRA tables (interim/sidra/t<table>.parquet), long; the tables listed in
     # database.sidra_tables. PILAR-2b reads PAM/PPM from bbp.v_sidra.
     "sidra": ([], ["sidra_table", "year", "variable"]),
+    # SNIS (to 2022) + SINISA (from 2023) on harmonised variables; PILAR-2b reads bbp.v_sanitation.
+    "sanitation": (["sanitation"], ["variable", "year", "geocode"]),
+    "sanitation_continuity": (["sanitation_continuity"], ["variable"]),
 }
 SIDRA_DROP_COLUMNS = ["name", "variable_raw"]  # municipality names live in the platform; raw label = variable
 N1_COMPACT = ["geocode", "year", "crop", "feedstock", "variant", "production_t", "yield_source",

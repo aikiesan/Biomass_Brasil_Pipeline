@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             stages = STAGES[STAGES.index(args.from_stage):]
         for st in STAGES:
             if st in stages:
-                kw = {"force": args.force} if st == "ingest" else {}
+                kw = {"force": args.force} if st in ("ingest", "sanitation") else {}
                 _run_stage(st, pipeline.STAGE_FUNCS[st], cfg, args.keep_going, **kw)
     except CheckFailed as exc:
         log.error("%s", exc)
