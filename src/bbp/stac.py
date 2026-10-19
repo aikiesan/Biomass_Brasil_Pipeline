@@ -49,6 +49,7 @@ TABLE_TITLES = {
     "reach_competition": "Crop area by number of plants within the competition radius",
     "reach_mills": "Sugarcane mills: cane within each radius, required radius, supply ratio, contested cane",
     "reach_aggregation_check": "Share within reach from 30 m pixels vs from ~480 m cells",
+    "reach_scale": "Share within reach by radius at the pixel, the municipality and the region, per rule (MAUP)",
 }
 
 

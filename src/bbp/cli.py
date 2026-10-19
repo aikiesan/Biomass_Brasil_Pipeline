@@ -10,6 +10,7 @@
                                       Fig 1 land-cover display rasters from the 30 m coverage (resumable)
     bbp plants                        processing plants of Brazil in one register (same as bbp run plants)
     bbp reach [--budget 600]          crop area within reach of the plants from the 30 m pixels (long; resumable)
+    bbp scale                         the same reach at the pixel, the municipality and the region (MAUP)
     bbp explore [--only x01 x04]      exploratory figures, each element also on its own (data/paper/explore)
     bbp check-factors                 compare conversion_factors.yaml with the CP2b canonical YAML
     bbp paper [--no-figures]          paper numbers.json, Tables 1–4 and Figs 1–6 (profile `paper` by default)
@@ -151,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     rp = sub.add_parser("reach", help="crop area within reach of the plants, 30 m (long; resumable)")
     rp.add_argument("--budget", type=float, default=None,
                     help="stop after this many seconds and resume on the next call (default: run to the end)")
+    sub.add_parser("scale", help="reach at three resolutions: pixel, municipality, intermediate region (needs bbp reach)")
     xp = sub.add_parser("explore", help="exploratory figures on the plants and their surroundings")
     xp.add_argument("--only", nargs="*", help="figure keys, e.g. x01 x04 (default: all)")
     pp = sub.add_parser("paper", help="numbers.json, Tables 1–4 and the figures of the paper")
@@ -160,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     profile = args.profile or ("paper" if args.command in ("paper", "figures", "landcover", "plants", "reach",
-                                                                 "explore") else None)
+                                                                 "scale", "explore") else None)
     cfg = load_config(args.config, profile=profile)
     if args.command == "info":
         return cmd_info(cfg)
@@ -207,9 +209,13 @@ def main(argv: list[str] | None = None) -> int:
             ok = _run_stage("landcover", lambda c, ck: build_landcover(c, ck, args.years, args.budget), cfg,
                             keep_going=True)
             return 0 if ok else 1
-        if args.command in ("plants", "reach", "explore"):
+        if args.command in ("plants", "reach", "scale", "explore"):
             if args.command == "plants":
                 func = pipeline.stage_plants
+            elif args.command == "scale":
+                from bbp import scale
+
+                func = scale.run
             elif args.command == "reach":
                 from bbp import reach
 

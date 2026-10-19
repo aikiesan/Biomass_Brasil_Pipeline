@@ -28,6 +28,7 @@ TABLES = [
     "h2_mixed_effects", "h2_model_fit", "h2_rf_importance", "h2_moran",
     "plants", "plants_biomethane_snapshots", "plants_register_match",
     "reach_units", "reach_hist", "reach_distance", "reach_competition", "reach_mills", "reach_aggregation_check",
+    "reach_scale",
 ]
 
 

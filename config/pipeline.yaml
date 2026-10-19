@@ -297,3 +297,16 @@ plants:
       - {crop: soybean, family: biodiesel}
       - {crop: all_crops, family: biogas}
       - {crop: all_crops, family: biomethane}
+  # `bbp scale`: the reach of the pairs above at the pixel, the municipality and the intermediate region.
+  # Rules for the units: area_fraction (main; the unit's crop spread like its land), centroid (sensitivity),
+  # representative_point (the exploratory x05). An infinite radius is always added (convergence check).
+  scale:
+    radii_km: [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000, 2000]
+    # share within 30 km in the exploratory x05 (480 m cells, April 2026 register, representative points);
+    # compared, not used
+    exploratory_x05:
+      "sugarcane|sugarcane_mill": {pixel: 0.948, municipality: 0.919, rgint: 0.725}
+      "corn_2nd|corn_ethanol": {pixel: 0.106, municipality: 0.110, rgint: 0.0005}
+      "soybean|biodiesel": {pixel: 0.071, municipality: 0.097, rgint: 0.157}
+      "all_crops|biogas": {pixel: 0.247, municipality: 0.249, rgint: 0.256}
+      "all_crops|biomethane": {pixel: 0.0206, municipality: 0.0208, rgint: 0.017}
