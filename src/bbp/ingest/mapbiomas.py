@@ -89,6 +89,60 @@ def read_coverage_xlsx(path: Path, sheet: str, years: list[int]) -> pd.DataFrame
         wb.close()
 
 
+IRRIGATION_REQUIRED = {"MUNICIPALITY_GEOCODE", "BIOME", "IRRIGATION_CLASS_NAME", "AGRICULTURE_CLASS_ID",
+                       "AGRICULTURE_CLASS_NAME", "COLLECTION"}
+
+
+def parse_irrigation_rows(rows, years_wanted: list[int]) -> pd.DataFrame:
+    """MapBiomas irrigation-systems statistics (sheet IRRIGATION_SYSTEMS) -> long table.
+
+    One row per municipality x biome x irrigation system x irrigated crop, one column per year
+    (hectares). Returns geocode, biome, irrigation_class, agriculture_class_id, agriculture_class,
+    collection, year, area_ha.
+    """
+    rows = iter(rows)
+    names = [str(h).strip() if h is not None else "" for h in next(rows)]
+    idx = {n: i for i, n in enumerate(names)}
+    missing = IRRIGATION_REQUIRED - set(idx)
+    if missing:
+        raise ValueError(f"MapBiomas irrigation sheet lacks columns {sorted(missing)}; header = {names}")
+    year_cols = {int(m.group(1)): i for i, n in enumerate(names) if (m := YEAR_COL.match(n))}
+    use_years = [y for y in years_wanted if y in year_cols]
+    if not use_years:
+        raise ValueError(f"None of the years {years_wanted[0]}–{years_wanted[-1]} are in the irrigation sheet")
+    keys, values = [], []
+    for row in rows:
+        g = row[idx["MUNICIPALITY_GEOCODE"]]
+        if g is None or str(g).strip() == "":
+            continue
+        keys.append((int(float(g)), row[idx["BIOME"]], row[idx["IRRIGATION_CLASS_NAME"]],
+                     int(float(row[idx["AGRICULTURE_CLASS_ID"]])), row[idx["AGRICULTURE_CLASS_NAME"]],
+                     int(float(row[idx["COLLECTION"]]))))
+        values.append([np.nan if row[year_cols[y]] is None else float(row[year_cols[y]]) for y in use_years])
+    wide = pd.DataFrame(keys, columns=["geocode", "biome", "irrigation_class", "agriculture_class_id",
+                                       "agriculture_class", "collection"])
+    wide[use_years] = np.asarray(values, dtype="float64").reshape(len(keys), len(use_years))
+    long = wide.melt(id_vars=list(wide.columns[:6]), var_name="year", value_name="area_ha").dropna(subset=["area_ha"])
+    long["year"] = long["year"].astype("int16")
+    long["geocode"] = long["geocode"].astype("int64")
+    for c in ("biome", "irrigation_class", "agriculture_class"):
+        long[c] = long[c].astype("category")
+    return long.reset_index(drop=True)
+
+
+def read_irrigation_xlsx(path: Path, years: list[int], sheet: str = "IRRIGATION_SYSTEMS") -> pd.DataFrame:
+    import openpyxl
+
+    log.info("Reading %s [%s]", path.name, sheet)
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        if sheet not in wb.sheetnames:
+            raise ValueError(f"Sheet {sheet!r} not in {path.name}: {wb.sheetnames}")
+        return parse_irrigation_rows(wb[sheet].iter_rows(values_only=True), years)
+    finally:
+        wb.close()
+
+
 def read_legend(path: Path) -> pd.DataFrame:
     leg = pd.read_csv(path)
     leg = leg.rename(columns={"class_name_en": "class_name"})

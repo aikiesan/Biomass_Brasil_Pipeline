@@ -21,9 +21,15 @@ inputs:
 
   mapbiomas_municipal_xlsx: "MapBiomas_Update_2025_Colecao_11/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY_2025/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY.xlsx"
   mapbiomas_legend_csv: "MapBiomas_Update_2025_Colecao_11/legend_code_mapbiomas_brazil_collection_11.csv"
+  # Irrigation systems (center pivot, other systems) by municipality and irrigated crop: H2 predictor
+  mapbiomas_irrigation_xlsx: "MapBiomas_Update_2025_Colecao_11/MAPBIOMAS-BRAZIL-IRRIGATION-SYSTEMS-MUNICIPALITY-COLLECTION_11.xlsx"
 
 
   second_crop_tif_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Segunda_Safra_TIF"
+  # Collection 11 coverage rasters (30 m), one per year: border-share predictor (bbp border-share)
+  coverage_tif_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Cobertura_Col11_TIF"
+  # landsat_valid_obs_<year>.csv exported by docs/gee/landsat_valid_observations.js: H2 cloud proxy
+  landsat_valid_obs_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Landsat_Valid_Obs"
   # National series exported from the MapBiomas platform; used only as an invariant check
   second_crop_national_csv: "00_Primary_Data_Sources_PILAR2b/11_Analises_Complementares/Milho2_Serasa/Série temporal de Agricultura • Uso agrícola - Segunda safra por classe • 2000 - 2024.csv"
 
@@ -187,11 +193,29 @@ second_crop:
     other_2nd: "Outras culturas de segunda safra / Cobertura"
   national_tolerance: 0.005 # |pipeline − MapBiomas| / MapBiomas allowed per year (observed: < 0.01 %)
 
+border_share:
+  # share of each crop's observed area within these distances of a boundary with another
+  # municipality (H2 predictor); computed from the coverage rasters for the reference years
+  tif_pattern: "brazil_coverage-col11_{year}.tif"
+  years: [2020, 2021, 2022, 2023, 2024]
+  distances_m: [1000, 2000]
+  window: 2048
+  # the rasters must reproduce the Collection 11 municipal statistics: median |raster/stats − 1|
+  # (Collection 10 rasters differ by 1–3 %)
+  collection_tolerance: 0.005
+
 reconcile:
   scales: [municipality, rgint, uf, nation]
   tolerances: [0.10, 0.25]   # share of units with |A_obs/A_dec − 1| <= tol
   min_area_ha: 50            # units where both sources are below this are not scored
   reference_years: [2020, 2021, 2022, 2023, 2024]
+
+analyse:
+  # H2 models over the municipal log-ratio. years: default = reconcile.reference_years;
+  # crops: default = every crop with an observed (MapBiomas) area
+  years: null
+  crops: null
+  min_observations: 200
 
 inventory:
   # Yield fallback when a municipality has observed area but no declared area

@@ -25,6 +25,7 @@ TABLES = [
     "municipality_attributes", "crop_area", "agreement_by_scale", "unit_ratios_municipality", "unit_ratios_rgint",
     "unit_ratios_uf", "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
     "sanitation", "sanitation_continuity",
+    "h2_mixed_effects", "h2_model_fit", "h2_rf_importance", "h2_moran",
 ]
 
 
@@ -73,9 +74,9 @@ def git_commit(repo: Path) -> str | None:
 
 def _inputs(cfg: Config) -> list[Path]:
     paths = [p for _, p in cfg.input_files()]
-    tif_dir = cfg.input_path("second_crop_tif_dir")
-    if tif_dir.is_dir():
-        paths.extend(sorted(tif_dir.glob("*.tif")))
+    for key in ("second_crop_tif_dir", "coverage_tif_dir"):
+        if key in cfg.raw["inputs"] and (tif_dir := cfg.input_path(key)).is_dir():
+            paths.extend(sorted(tif_dir.glob("*.tif")))
     return [p for p in paths if p.is_file()]
 
 

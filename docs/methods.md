@@ -106,15 +106,46 @@ For each scale × crop × year, over units where max(A_obs, A_dec) ≥ 50 ha
 * Lin's concordance correlation coefficient and Spearman ρ;
 * counts of units present in both sources, in one only.
 
-## 5. Explaining divergence (H2) — inputs
+## 5. Explaining divergence (H2)
 
-`processed/predictors.parquet` (municipality × year): municipal area (log),
-dominant biome, share of the municipality under crops (MapBiomas classes 20,
-35, 39, 40, 41, 46, 47, 48, 62), double-crop intensity (observed
-second-season corn / observed soybean), new-municipality flag. Model fitting
-(mixed model, RF, Moran's I) is done in analysis notebooks on these tables,
-not inside the pipeline. Border-proximity and Landsat-observation predictors
-are planned (see `decisions.md`).
+Response: the municipal log-ratio ln(A_obs/A_dec) per crop for the reference
+years (2020–2024), where both sources report the crop.
+
+Predictors (`processed/predictors.parquet`), municipality × year:
+
+* log municipal area; dominant biome; share of the municipality under crops
+  (MapBiomas classes 20, 35, 39, 40, 41, 46, 47, 48, 62); double-crop intensity
+  (observed second-season corn / observed soybean, log1p, capped at 10);
+  new-municipality flag.
+* **Irrigated share**: MapBiomas Col. 11 irrigation systems (center pivot and
+  other systems, municipal statistics) / crop area.
+* **Border share** (`bbp border-share`): share of the crop's observed area
+  within 1 km (and 2 km) of a boundary with another municipality, from the
+  Col. 11 coverage rasters. The mesh is rasterised onto each raster grid;
+  boundary pixels have a 4-neighbour in another municipality (coastline and
+  national border excluded); distances are Euclidean in metres (pixel size at
+  the window's central latitude) in windows with a halo wider than 2 km; areas
+  are geodesic per pixel row. The run is rejected when the raster does not
+  reproduce the Col. 11 municipal statistics (median |raster/stats − 1| ≤ 0.5 %).
+* **Clear Landsat observations** (cloud proxy): mean number of clear Landsat
+  5/7/8/9 Collection 2 observations per crop pixel and year (QA_PIXEL: no fill,
+  dilated cloud, cirrus, cloud, shadow or snow), from Earth Engine.
+
+Models (`bbp run analyse`, fixed seed):
+
+* **Mixed model** (statsmodels MixedLM, REML): standardised numeric predictors,
+  biome and year as fixed effects, random intercept for the intermediate
+  region. Marginal and conditional R² after Nakagawa & Schielzeth (2013).
+  Biome levels with < 30 municipality-years are pooled; when the region
+  variance is not estimable the model falls back to OLS with standard errors
+  clustered by region (recorded in `h2_model_fit.model`).
+* **Random forest** (300 trees, min. 5 per leaf): R² in 5-fold cross-validation
+  grouped by intermediate region (no region in both train and test) and
+  permutation importance on the held-out folds.
+* **Moran's I** of the mixed-model residuals averaged per municipality, queen
+  contiguity, row-standardised, 999 permutations.
+
+Outputs: `h2_mixed_effects`, `h2_model_fit`, `h2_rf_importance`, `h2_moran`.
 
 ## 6. N1 (H3)
 

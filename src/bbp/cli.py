@@ -5,6 +5,7 @@
     bbp run area reconcile            selected stages
     bbp run --from reconcile          a stage and everything after it
     bbp second-crop [--years 2023 2024] [--grid-only]
+    bbp border-share [--years 2024]   crop area near municipal borders (coverage rasters; long, resumable)
     bbp check-factors                 compare conversion_factors.yaml with the CP2b canonical YAML
     bbp load [--yes] [--dry-run]      load data/processed into PostgreSQL/PostGIS (schema bbp) as a new release
     bbp db-status                     list the releases in the database
@@ -126,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("second-crop")
     s.add_argument("--years", type=int, nargs="*")
     s.add_argument("--grid-only", action="store_true")
+    bsp = sub.add_parser("border-share", help="crop area near municipal borders, from the coverage rasters (long)")
+    bsp.add_argument("--years", type=int, nargs="*", help="default: border_share.years in pipeline.yaml")
 
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
@@ -158,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
             _run_stage("second_crop", pipeline.stage_second_crop, cfg, keep_going=True,
                        years=args.years, grid_only=args.grid_only)
             return 0
+        if args.command == "border-share":
+            ok = _run_stage("border_share", pipeline.stage_border_share, cfg, keep_going=True, years=args.years)
+            return 0 if ok else 1
         unknown = [st for st in args.stages if st not in STAGES]
         if unknown:
             ap.error(f"unknown stage(s) {unknown}; choose from {STAGES}")

@@ -28,6 +28,10 @@ dependencies = [
   "rasterio>=1.3",
   "shapely>=2.0",
   "pyproj>=3.5",
+  "statsmodels>=0.14",     # H2 mixed model (analyse)
+  "scikit-learn>=1.3",     # H2 random forest + permutation importance (analyse)
+  "matplotlib>=3.8",       # paper figures (figures)
+  "pystac>=1.9",           # STAC catalogue of the release (publish)
 ]
 
 [project.optional-dependencies]

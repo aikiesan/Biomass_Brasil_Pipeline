@@ -56,7 +56,9 @@ def agreement_by_scale(area, attrs, scales, mismatch, tolerances, min_area_ha) -
     return pd.concat(metrics, ignore_index=True), units
 
 
-def predictors(area: pd.DataFrame, attrs: pd.DataFrame, mapbiomas: pd.DataFrame) -> pd.DataFrame:
+def predictors(area: pd.DataFrame, attrs: pd.DataFrame, mapbiomas: pd.DataFrame,
+               irrigation: pd.DataFrame | None = None, border: pd.DataFrame | None = None,
+               observations: pd.DataFrame | None = None) -> pd.DataFrame:
     """Municipality x year explanatory variables for the divergence model (H2).
 
     - log municipal area
@@ -64,8 +66,11 @@ def predictors(area: pd.DataFrame, attrs: pd.DataFrame, mapbiomas: pd.DataFrame)
     - agricultural share of the municipality (MapBiomas classes of the crop group)
     - double-cropping intensity: observed second-season corn / observed soybean
     - created_after_start (new municipality) flag
-    Border-proximity and Landsat-observation-count predictors need raster
-    work and are added by a later stage (see docs/decisions.md).
+    - irrigated area and its share of the crop area (MapBiomas irrigation systems), when given
+    - border share: crop area within 1 and 2 km of the municipal boundary / crop area
+      (from the coverage rasters, `bbp border-share`), when given; per municipality x year x crop
+      it is joined by the analysis, here only the all-crops value
+    - Landsat valid observations (cloud proxy, `docs/gee/landsat_valid_observations.js`), when given
     """
     tot = mapbiomas.groupby(["geocode", "year"], as_index=False)["area_ha"].sum().rename(columns={"area_ha": "mun_area_ha"})
     biome = (mapbiomas.groupby(["geocode", "biome"], observed=True)["area_ha"].sum().reset_index()
@@ -86,4 +91,16 @@ def predictors(area: pd.DataFrame, attrs: pd.DataFrame, mapbiomas: pd.DataFrame)
     out["log_mun_area_ha"] = np.log(out["mun_area_ha"])
     out = out.merge(biome, on="geocode", how="left")
     out = out.merge(attrs[["geocode", "uf", "cd_rgint", "created_after_start"]], on="geocode", how="left")
+    if irrigation is not None:
+        irr = irrigation.groupby(["geocode", "year"], as_index=False)["area_ha"].sum().rename(
+            columns={"area_ha": "irrigated_area_ha"})
+        irr["geocode"], irr["year"] = irr["geocode"].astype(out["geocode"].dtype), irr["year"].astype(out["year"].dtype)
+        out = out.merge(irr, on=["geocode", "year"], how="left")
+        out["irrigated_area_ha"] = out["irrigated_area_ha"].fillna(0.0)  # absent from the sheet = no irrigation mapped
+        out["irrigated_share"] = (out["irrigated_area_ha"] / out["crop_area_ha"].where(out["crop_area_ha"] > 0)).clip(upper=1)
+    if border is not None:
+        b = border[border["crop"] == "all"][["geocode", "year", "border_share_1km", "border_share_2km"]]
+        out = out.merge(b, on=["geocode", "year"], how="left")
+    if observations is not None:
+        out = out.merge(observations[["geocode", "year", "landsat_valid_obs"]], on=["geocode", "year"], how="left")
     return out
