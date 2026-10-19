@@ -1,0 +1,142 @@
+# =============================================================================
+# Profile: Geocarto International paper (FOSS4G Europe 2026 special issue)
+# =============================================================================
+# A profile is merged over pipeline.yaml (and paths.local.yaml):
+#
+#   bbp --profile paper paper          # numbers.json, Tables 1–4, Figs 1–6
+#   bbp --profile paper figures        # figures only (`bbp figures` uses this profile by default)
+#
+# `bbp paper` and `bbp figures` read the tables of the full run (data/processed,
+# 2008–2025) and keep the years and crops below. Every table they read is computed
+# per year (agreement, N1, source vs factor effect, rank shift) or over the
+# reference years (H2), so filtering gives the same numbers as rerunning the
+# pipeline with this profile. `bbp --profile paper run` also works, but rewrites
+# data/processed with the shorter period.
+# =============================================================================
+
+years:
+  start: 2008
+  end: 2024               # IBGE marks 2025 as preliminary; the second-crop rasters end in 2024
+
+# Crops of the paper, in display order. Rice and cotton are area only (no CP2b residue
+# factor); first-season corn has no MapBiomas class (declared only, same in both N1 variants).
+crops: [soybean, corn_2nd, sugarcane, coffee, citrus, cotton, rice, corn_1st]
+
+paper:
+  # conversion_factors.yaml `source.version` must be this (checked by `bbp paper`)
+  factor_version: "CP2b canonical v1.0 / Método CP2b v5.1"
+  # years summarised in Tables 2 and 4 and in Figs 3, 4 and 6 (mean or median over them);
+  # default: reconcile.reference_years
+  summary_years: [2020, 2021, 2022, 2023, 2024]
+  # output folder, relative to data_dir (git-ignored like the rest of data/)
+  out_dir: paper
+  # figures are drawn at final size (132 or 90 mm wide), NIPE style; PDF and SVG are vector, PNG and TIFF 600 dpi
+  figure_formats: [pdf, svg, png, tif]
+  dpi: 600
+  # greyscale and deuteranopia renderings of every PNG, for checking (data/paper/figures_check)
+  legibility_check: true
+  # geometry simplification for the maps (degrees, SIRGAS 2000); cached in data/interim
+  simplify_deg: 0.005
+  # map layers, relative to raw_root. countries: any admin-0 polygon layer with South America (e.g. Natural
+  # Earth ne_50m_admin_0_countries, public domain); without it Fig 1 has no South America locator.
+  layers:
+    biomes_shp: "00_Primary_Data_Sources_PILAR2b/SHAPEFILES_MAPBIOMAS_10.1/BIOMES_v2/BIOMES_v2.shp"
+    # Natural Earth 1:50 m admin-0 countries (public domain, v5.1.x): Fig 1 locator and same-scale shapes
+    countries_shp: "00_Primary_Data_Sources_PILAR2b/13_Natural_Earth/ne_50m_admin_0_countries.geojson"
+  # Fig 1: MapBiomas land cover in display groups (bbp.landcover; aggregated once from the 30 m coverage
+  # and cached in data/interim/landcover), the 133 intermediate regions, and details joined by the NIPE
+  # device. `coverage`: rasters of years kept outside inputs.coverage_tif_dir (relative to raw_root).
+  # `variants`: the same figure for other years (fig01_study_area_<year>), drawn when their raster exists.
+  # details: `uf` (window = the state) or `bounds` [lon0, lat0, lon1, lat1]; place: bottom (large, beside the
+  # legend) or corner (small, in the empty south-west corner of the national map). Cities: the seat of each
+  # intermediate region in the window (the municipality named after the region) plus `cities`.
+  fig1:
+    year: 2024
+    variants: [2025]
+    coverage:
+      2025: "brazil_coverage-col11_2025.tif"
+    map_width_mm: 86
+    detail_max_h_mm: 60
+    details:
+      - {key: MT, title: "Centre-north Mato Grosso", bounds: [-57.6, -14.6, -54.4, -11.4], place: corner,
+         city_uf: MT, cities: ["Sorriso", "Lucas do Rio Verde", "Nova Mutum"]}
+      - {key: SP, title: "São Paulo State", uf: SP, place: bottom}
+    ocean_label: [-41.5, 2.6]          # lon, lat of "Atlantic Ocean" on the national map
+  # Supplementary Fig S1: zoomed log-ratio maps (state, crop)
+  fig4_insets:
+    - {uf: SP, crop: sugarcane}
+    - {uf: MG, crop: coffee}
+    - {uf: SP, crop: citrus}
+  # Fig 6: example municipalities on the Col. 11 coverage raster. `examples` (geocodes) are drawn when set;
+  # until then the top candidate of each rule is drawn and all candidates go to fig06_candidates.csv.
+  fig6:
+    year: 2024
+    examples: []
+    max_chip_px: 900
+  # Fig 2 side box: what the invariant checks caught. Numbers marked `from` come from the run's check
+  # logs; the others are results of comparisons outside the stages (source given), kept here as text.
+  checks_caught:
+    - {text: "IBGE revised 2024 after our export: municipal sums 0.07–0.35 % off the national totals",
+       source: "SIDRA API national totals (data/scratch/compare_national.py)"}
+    - {text: "{n} IBGE herd records where a subset exceeds its total (kept as published)", from: herd_subsets}
+    - {text: "Coverage rasters of another collection rejected (Col. 10 differs 1–3 %; Col. 11: {value})",
+       from: collection_guard}
+    - {text: "{n} crop classes checked against their Col. 11 labels (renumbering guard)", from: class_guard}
+    - {text: "PILAR-2b platform loaded from bbp: 0 differences with its own ingest",
+       source: "bbp load --target pilar2b parity test"}
+  # Table 1. Period and files come from the configuration and the data; these are
+  # the facts the pipeline cannot read from the files.
+  sources:
+    - {key: municipalities_shp, source: "IBGE Malha Municipal", version: "2025", access: "geoftp.ibge.gov.br",
+       licence: "public (IBGE)"}
+    - {key: mapbiomas_municipal_xlsx, source: "MapBiomas Brasil — coverage statistics by municipality",
+       version: "Collection 11", access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: second_crop_tif_dir, source: "MapBiomas — second crop (beta), 30 m rasters", version: "Collection 11",
+       access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: mapbiomas_irrigation_xlsx, source: "MapBiomas — irrigation systems by municipality",
+       version: "Collection 11", access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: coverage_tif_dir, source: "MapBiomas — coverage rasters, 30 m (border share)", version: "Collection 11",
+       access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: sidra_5457, source: "IBGE PAM — table 5457 (crops)", version: "SIDRA", access: "sidra.ibge.gov.br",
+       licence: "public (IBGE)"}
+    - {key: sidra_839, source: "IBGE PAM — table 839 (corn by season)", version: "SIDRA",
+       access: "sidra.ibge.gov.br", licence: "public (IBGE)"}
+    - {key: sidra_1612, source: "IBGE PAM — table 1612 (temporary crops)", version: "SIDRA",
+       access: "sidra.ibge.gov.br", licence: "public (IBGE)"}
+    - {key: conversion_factors, source: "CP2b conversion factors (g, TS, VS/TS, BMP)",
+       version: "CP2b canonical v1.0 / Método CP2b v5.1", access: "config/conversion_factors.yaml",
+       licence: "with the code (GPL-3.0)"}
+
+# Processing plants (bbp.plants -> data/interim/plants.parquet) and what lies around them (bbp.reach ->
+# data/processed/reach_*.parquet, exploratory figures in data/paper/explore). Paths relative to raw_root.
+plants:
+  sources:
+    anp_ethanol: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/Plantas de etanol.csv"
+    anp_biodiesel: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/Plantas de biodiesel.csv"
+    anp_biomethane: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/05c_anp_biometano_plants_latest.csv"
+    biogas: "MapBiomas_Update_2025_Colecao_11/structure_biogas_plant/usina_biogas.shp"
+    biomass_power: "MapBiomas_Update_2025_Colecao_11/structure_biomass_thermal_power_plant/Usinas_Termele╠ütricas_UTE_Biomassa.shp"
+    slaughterhouses: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/mapbiomas_infra/structure_slaughterhouse/frigorificos.shp"
+  context:
+    mapbiomas_ethanol: "MapBiomas_Update_2025_Colecao_11/structure_ethanol_plant/usina_etanol.shp"
+    biodiesel_mapbiomas: "MapBiomas_Update_2025_Colecao_11/structure_biodiesel_plant/usina_biodiesel.shp"
+    conab_mills: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/conab/UNIDADE_PRODUCAO_ETANOL_ACUCAR_BR_ATIVAS_2025.zip"
+    gas_delivery: "MapBiomas_Update_2025_Colecao_11/structure_gas_delivery_point/PONTOS_ENTREGA.shp"
+    gas_pipeline: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/mapbiomas_infra/structure_transportation_gas_pipeline/gasoduto-transporte.shp"
+  # reach: radii of the catchment tables (km, Cervi et al. 2019 used 10–50 km for cane), the ring width and the
+  # largest distance kept; pairs of (crop group, plant family) for the national distance curves.
+  reach:
+    radii_km: [10, 20, 30, 50, 75, 100]
+    ring_km: 1
+    max_km: 150
+    # cane supply a mill needs: crushing class midpoint / yield (assumption, CONAB 2024/25 national ~75 t/ha)
+    cane_yield_t_ha: 75
+    pairs:
+      - {crop: sugarcane, family: sugarcane_mill}
+      - {crop: sugarcane, family: biomass_power, subtype: bagasse}
+      - {crop: soy_corn2, family: corn_ethanol}
+      - {crop: soy_all, family: biodiesel}
+      - {crop: soy_all, family: biogas}
+      - {crop: pasture, family: slaughterhouse}
+      - {crop: all_crops, family: biogas}
+      - {crop: all_crops, family: biomethane}

@@ -128,15 +128,43 @@ Unicamp VM (SSH tunnel) and the read-only role.
 | `sanitation_continuity` | variable | the SNIS → SINISA break: last SNIS year vs first SINISA year over municipalities reporting both |
 
 `bbp run publish` writes `data/release/bbp_v<version>_<date>/` with gzipped CSVs,
-a GeoPackage for the latest common year and `manifest.json` (git commit,
-configuration, SHA-256 of every input and output, check summary) — ready to
-deposit on Zenodo/REDU.
+a GeoPackage for the latest common year, `manifest.json` (git commit,
+configuration, SHA-256 of every input and output, check summary) and a
+self-contained STAC catalogue (`catalog.json`: one collection, one item per
+file, with size, SHA-256, row count and columns) — ready to deposit on Zenodo/REDU.
+
+## Paper package
+
+```bash
+bbp paper                      # numbers.json, Tables 1–5, Figs 1–10 + S1–S4, captions (profile `paper`)
+bbp paper --no-figures         # numbers and tables only
+bbp figures --only 4 5         # selected figures
+bbp landcover [--budget 150]   # Fig 1 land-cover display rasters from the 30 m coverage (once; resumable;
+                               # bbp figures builds them on first use otherwise)
+bbp plants                     # processing plants (ANP, CIBiogás, ANEEL, MAPA SIF) -> data/interim/plants.parquet
+bbp reach                      # crop area around the plants: catchments, distances, MAUP test (data/processed/reach_*)
+bbp explore [--only x01 x04]   # exploratory figures x01–x08, each element also on its own (data/paper/explore)
+bbp --profile paper run ...    # any command with config/profiles/paper.yaml merged over pipeline.yaml
+```
+
+The `paper` profile fixes the period (2008–2024), the crops and the factor
+version (checked against `conversion_factors.yaml`). `bbp paper` reads the tables
+of the full run in `data/processed` and keeps the profile's years and crops; every
+table it uses is per year (or over the reference years for H2), so this gives the
+same numbers as a run restricted to the profile. Outputs go to `data/paper/`
+(git-ignored): `numbers.json` (every number quoted in the text, with the SHA-256 of
+the tables it was read from), `tables/table<N>_*.csv|md` and
+`figures/fig<NN>_*.pdf|png` and `captions.md`, made with matplotlib, GeoPandas and rasterio only.
+Figures follow the NIPE/Unicamp cartographic style at Geocarto sizes (132 or 90 mm wide): laid out in
+millimetres, maps at a fixed scale in SIRGAS 2000 / Brazil Polyconic with north arrow, scale bar and
+credits, Liberation Sans (installed in the Docker image), one colour per crop across all figures;
+exported as PDF, SVG, PNG and TIFF (600 dpi). `bbp.figstyle` and `bbp.cartography` hold the style.
 
 ## Repository layout
 
 ```
-config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml · sanitation.yaml
-src/bbp/      ingest/ (sources) · harmonise · area · reconcile · inventory · publish · checks · cli
+config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml · sanitation.yaml · profiles/
+src/bbp/      ingest/ (sources) · harmonise · area · reconcile · inventory · analyse · publish · stac · paper · figures · checks · cli
 tests/        synthetic-data unit tests (run in CI; no source data needed)
 docs/         methods · data sources · decisions log · deployment
 docker/       initdb scripts for the local PostGIS · roles.sql for production

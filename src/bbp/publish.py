@@ -1,4 +1,4 @@
-"""Build a versioned release folder: CSV tables, a GeoPackage and a manifest with checksums."""
+"""Build a versioned release folder: CSV tables, a GeoPackage, a manifest with checksums and a STAC catalogue."""
 
 from __future__ import annotations
 
@@ -134,6 +134,10 @@ def publish(cfg: Config, ck: CheckLog) -> Path:
     }
     with open(rel / "manifest.json", "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2, ensure_ascii=False, default=str)
+
+    from bbp.stac import write_catalog
+
+    write_catalog(cfg, rel, manifest, ck)
     log.info("Release written to %s", rel)
     return rel
 

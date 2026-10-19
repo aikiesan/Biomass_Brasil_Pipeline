@@ -6,7 +6,15 @@
     bbp run --from reconcile          a stage and everything after it
     bbp second-crop [--years 2023 2024] [--grid-only]
     bbp border-share [--years 2024]   crop area near municipal borders (coverage rasters; long, resumable)
+    bbp landcover [--years 2024 2025] [--budget 150]
+                                      Fig 1 land-cover display rasters from the 30 m coverage (resumable)
+    bbp plants                        processing plants of Brazil in one table (data/interim/plants.parquet)
+    bbp reach                         crop area around the plants: catchments, distances, MAUP test (reach_*)
+    bbp explore [--only x01 x04]      exploratory figures, each element also on its own (data/paper/explore)
     bbp check-factors                 compare conversion_factors.yaml with the CP2b canonical YAML
+    bbp paper [--no-figures]          paper numbers.json, Tables 1–4 and Figs 1–6 (profile `paper` by default)
+    bbp figures [--only 3 4]          Figs 1–6 only
+    bbp --profile paper <command>     merge config/profiles/paper.yaml over pipeline.yaml
     bbp load [--yes] [--dry-run]      load data/processed into PostgreSQL/PostGIS (schema bbp) as a new release
     bbp db-status                     list the releases in the database
 """
@@ -97,6 +105,8 @@ def cmd_check_factors(cfg) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="bbp", description="Biomass Brasil Pipeline")
     ap.add_argument("--config", type=Path, default=None, help="config directory (default: <repo>/config)")
+    ap.add_argument("--profile", default=None,
+                    help="config/profiles/<name>.yaml merged over pipeline.yaml (paper/figures default: paper)")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="command", required=True)
 
@@ -129,9 +139,23 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--grid-only", action="store_true")
     bsp = sub.add_parser("border-share", help="crop area near municipal borders, from the coverage rasters (long)")
     bsp.add_argument("--years", type=int, nargs="*", help="default: border_share.years in pipeline.yaml")
+    lcp = sub.add_parser("landcover", help="land-cover display rasters of Fig 1 (data/interim/landcover)")
+    lcp.add_argument("--years", type=int, nargs="*", help="default: paper.fig1.year and its variants")
+    lcp.add_argument("--budget", type=float, default=None,
+                     help="stop after this many seconds and resume on the next call (default: run to the end)")
+    sub.add_parser("plants", help="processing plants (ANP, CIBiogás, ANEEL, MAPA) -> data/interim/plants.parquet")
+    sub.add_parser("reach", help="crop area around the plants (needs bbp landcover counts and bbp plants)")
+    xp = sub.add_parser("explore", help="exploratory figures on the plants and their surroundings")
+    xp.add_argument("--only", nargs="*", help="figure keys, e.g. x01 x04 (default: all)")
+    pp = sub.add_parser("paper", help="numbers.json, Tables 1–4 and the figures of the paper")
+    pp.add_argument("--no-figures", action="store_true", help="numbers and tables only")
+    fg = sub.add_parser("figures", help="Figs 1–6 of the paper")
+    fg.add_argument("--only", type=int, nargs="*", help="figure numbers (default: all)")
 
     args = ap.parse_args(argv)
-    cfg = load_config(args.config)
+    profile = args.profile or ("paper" if args.command in ("paper", "figures", "landcover", "plants", "reach",
+                                                                 "explore") else None)
+    cfg = load_config(args.config, profile=profile)
     if args.command == "info":
         return cmd_info(cfg)
     if args.command == "check-factors":
@@ -143,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     logfile = _setup_logging(cfg.data_dir, args.verbose)
-    log.info("bbp %s — log: %s", __version__, logfile)
+    log.info("bbp %s — log: %s%s", __version__, logfile, f" — profile: {cfg.profile}" if cfg.profile else "")
     from bbp import pipeline
 
     try:
@@ -161,6 +185,29 @@ def main(argv: list[str] | None = None) -> int:
             _run_stage("second_crop", pipeline.stage_second_crop, cfg, keep_going=True,
                        years=args.years, grid_only=args.grid_only)
             return 0
+        if args.command in ("paper", "figures"):
+            from bbp import figures, paper
+
+            ok = True
+            if args.command == "paper":
+                ok = _run_stage("paper", lambda c, ck: paper.build(c, ck), cfg, keep_going=False)
+            if args.command == "figures" or not args.no_figures:
+                ok = _run_stage("figures", lambda c, ck: figures.build(c, ck, only=getattr(args, "only", None)), cfg,
+                                keep_going=True) and ok
+            return 0 if ok else 1
+        if args.command == "landcover":
+            from bbp.figures import build_landcover
+
+            ok = _run_stage("landcover", lambda c, ck: build_landcover(c, ck, args.years, args.budget), cfg,
+                            keep_going=True)
+            return 0 if ok else 1
+        if args.command in ("plants", "reach", "explore"):
+            from bbp import explore, plants, reach
+
+            func = {"plants": plants.build_plants, "reach": reach.run,
+                    "explore": lambda c, ck: explore.build(c, ck, only=args.only)}[args.command]
+            ok = _run_stage(args.command, func, cfg, keep_going=True)
+            return 0 if ok else 1
         if args.command == "border-share":
             ok = _run_stage("border_share", pipeline.stage_border_share, cfg, keep_going=True, years=args.years)
             return 0 if ok else 1

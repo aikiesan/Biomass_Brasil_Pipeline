@@ -36,6 +36,7 @@ class Config:
     factors: dict[str, Any] = field(default_factory=dict)
     changes: dict[str, Any] = field(default_factory=dict)
     sanitation: dict[str, Any] = field(default_factory=dict)
+    profile: str | None = None
 
     # ---- paths -------------------------------------------------------------
     @property
@@ -112,19 +113,46 @@ class Config:
         return self.raw.get(name, {})
 
 
-def load_config(config_dir: Path | None = None) -> Config:
+def profile_path(config_dir: Path, profile: str) -> Path:
+    """A profile name (config/profiles/<name>.yaml) or a path to a YAML file."""
+    p = Path(profile)
+    if p.suffix in (".yaml", ".yml") and p.exists():
+        return p
+    p = config_dir / "profiles" / f"{profile}.yaml"
+    if not p.exists():
+        names = sorted(q.stem for q in (config_dir / "profiles").glob("*.yaml"))
+        raise FileNotFoundError(f"profile {profile!r} not found ({p}); available: {names}")
+    return p
+
+
+def load_config(config_dir: Path | None = None, profile: str | None = None) -> Config:
+    """pipeline.yaml, then paths.local.yaml, then the profile (if any), each merged over the previous.
+
+    A profile may also hold `crops: [names]`: only those crops of crops.yaml, in that order.
+    """
     config_dir = Path(config_dir) if config_dir else REPO_ROOT / "config"
     repo_root = config_dir.parent
     raw = _read_yaml(config_dir / "pipeline.yaml")
     local = config_dir / "paths.local.yaml"
     if local.exists():
         raw = _deep_update(raw, _read_yaml(local))
+    crops = _read_yaml(config_dir / "crops.yaml")["crops"]
+    if profile:
+        prof = _read_yaml(profile_path(config_dir, profile))
+        selected = prof.pop("crops", None)
+        raw = _deep_update(raw, prof)
+        if selected is not None:
+            unknown = [c for c in selected if c not in crops]
+            if unknown:
+                raise ValueError(f"profile {profile!r} names crops not in crops.yaml: {unknown}")
+            crops = {c: crops[c] for c in selected}
     sanitation = config_dir / "sanitation.yaml"
     return Config(
         raw=raw,
         repo_root=repo_root,
-        crops=_read_yaml(config_dir / "crops.yaml")["crops"],
+        crops=crops,
         factors=_read_yaml(config_dir / "conversion_factors.yaml"),
         changes=_read_yaml(config_dir / "municipality_changes.yaml"),
         sanitation=_read_yaml(sanitation) if sanitation.exists() else {},
+        profile=Path(profile).stem if profile else None,
     )
