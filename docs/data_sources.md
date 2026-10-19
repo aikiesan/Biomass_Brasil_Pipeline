@@ -23,6 +23,14 @@ a later run can prove it used the same bytes.
 | SINISA waste (resíduos sólidos) | `12_SINISA/{2023,2024}/residuos/SINISA_RESIDUOS_Informacoes_Formulario_Manejo_{year}.xlsx`, sheet `Manejo_Resíduos_Sólidos_Urbanos` | reference years 2023 (generated 18/03/2025) and 2024 | 2026-10-15 (re-download) | code row 13; non-respondents carry `null`; respondents 4,778 (2023) and 4,854 (2024) |
 | SINISA sewage (esgotamento sanitário) | `12_SINISA/{year}/esgoto/base_municipal/…Gestão Técnica de Esgoto…_Base Municipal_{year}.xlsx` + `consolidado_uf_mr_br/` | reference years 2023 (V2) and 2024 | 2026-10-15 (re-download) | 1,000 m³/yr; the UF/MR/BR workbook checks the municipal sums |
 | SINISA glossaries | `12_SINISA/glossario/Glossario_{Indicadores,Informacoes}_SINISA_2024.pdf` | 2024 (waste) | 2026-10-15 | evidence for the SNIS↔SINISA pairs in `config/sanitation.yaml` |
+| ANP ethanol plants | `14_Processing_Plants/anp/Plantas de etanol.csv` | Painel Dinâmico export | cut-off not recorded | 448 rows: 416 cane (incl. 17 flex), 49 corn (incl. 17 flex); crushing class, corn capacity |
+| ANP biodiesel plants | `14_Processing_Plants/anp/Plantas de biodiesel.csv` | Painel Dinâmico export | cut-off not recorded | 77 plants, capacity m³/day; status Operação / Ampliação / Construção |
+| ANP biomethane open data | `biometano-dados-abertos/Biometano_DadosAbertos_CSV_{Capacidade,Producao}.csv` | to 08/2026 | 2026-10-02 (file date) | capacity per plant and month (22 plants ever, 21 in 08/2026); production per state and month, mixed decimal notation (see methods §7). The April 2026 extract (`05c_anp_biometano_plants_latest.csv`) is kept as a record only |
+| CIBiogás biogas plants | MapBiomas `structure_biogas_plant/usina_biogas.shp` | BiogasMap via MapBiomas infrastructure | cut-off not recorded | 543 points; scale class, main use |
+| ANEEL biomass power plants | MapBiomas `structure_biomass_thermal_power_plant/…UTE_Biomassa.shp` | SIGA via MapBiomas | cut-off not recorded | 627 points; fuel, power (kW) |
+| MAPA SIF slaughterhouses | `14_Processing_Plants/mapbiomas_infra/structure_slaughterhouse/frigorificos.shp` | via MapBiomas | cut-off not recorded | 207 points; no capacity |
+| CONAB sugar/ethanol units | `14_Processing_Plants/conab/UNIDADE_PRODUCAO_ETANOL_ACUCAR_BR_ATIVAS_2025.zip` | active units 2025 | — | 324 units; cross-check of the ANP mills only |
+| MapBiomas / EPE ethanol plants | MapBiomas `structure_ethanol_plant/usina_etanol.shp` | EPE webmap 2018 (most points) | — | 397 points (365 operating); cross-check only |
 | CP2b conversion factors | `conversion_factors.yaml` (copy of canonical v1.0 + Método CP2b v5.1) | — | — | `bbp check-factors` compares with the canonical YAML |
 
 ## Re-exporting SIDRA tables

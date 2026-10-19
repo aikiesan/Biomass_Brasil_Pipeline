@@ -6,6 +6,14 @@ One line per decision, newest first. Open items are at the end.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-19 | Reach measured from the 30 m pixels (coverage + second crop 2024), not from aggregated cells; the ~480 m cells kept only as a check of the aggregation effect | The pixel is the reference resolution of the funnel; the check shows how much aggregation would move the result |
+| 2026-10-19 | Distance = great circle on the mean sphere (straight line, geodesic buffers), not planar EPSG:5880 | Polyconic distorts a 30 km radius by up to 5.5 % at the edges of Brazil; the sphere is within 0.6 % of WGS84 everywhere |
+| 2026-10-19 | Second-season corn = every corn pixel of the second-crop raster, whatever the first-season class | The register question is about all second-season corn, not only corn after soybean (14.07 vs 14.75 Mha in 2024) |
+| 2026-10-19 | Flex ethanol plants: one site, two functions (cane mill and corn ethanol) | Counted once; each function keeps its own capacity and pairing |
+| 2026-10-19 | ANP biomethane from the open data, snapshot 08/2026; April 2026 kept as a record; plants absent from the snapshot kept as not operating (Gasgrid/ZEG, SP, last record 06/2022) | One cut-off for the paper; nothing silently dropped |
+| 2026-10-19 | Plant register at the August 2026 cut-off has 1,940 rows (1,631 sites) instead of the 1,938 rows of the exploratory register | Biomethane 22 rows (21 operating + Gasgrid) instead of 20 from the April extract; one CIBiogás point outside Brazil dropped as before |
+| 2026-10-19 | Biodiesel plants under construction (ANP status Construção) do not operate | As for ethanol plants; 69 of 77 operate |
+| 2026-10-19 | Reach pairs of the paper: cane → mill, 2nd-season corn → corn ethanol, soybean → biodiesel, all crops → biogas, all crops → biomethane; pasture → slaughterhouse and cane → bagasse power left out of the default | The five conclusions of verification 2; other pairs can be added in `plants.reach.pairs` |
 | 2026-10-15 | N1_rec (reconciled variant) out of the paper | Keeps H3 declared vs observed; reconciliation is future work |
 | 2026-10-15 | Census of Agriculture 2017 out of the paper | Not on disk; mentioned in the discussion as future validation |
 | 2026-10-15 | Border share from **Collection 11** coverage rasters, reference years 2020–2024 (`bbp border-share`); the Collection 10 rasters of the ABIOVE project (ILUC_NIPE) are not used | One collection for the whole paper; the Col. 10 rasters differ from the Col. 11 statistics by 1–3 % per municipality. A guard rejects rasters that do not reproduce the Col. 11 municipal statistics |
@@ -37,5 +45,6 @@ One line per decision, newest first. Open items are at the end.
 4. Final crop list — cotton added as area-only (see above); does it go in the paper?
 5. Area method: geodesic (implemented for the rasters) vs EPSG:5880 — report the Polyconic bias per biome as a methods check (not implemented yet).
 6. H2 predictors: border share and cloud proxy implemented; waiting for the Col. 11 coverage rasters 2020–2024 and the GEE export.
-7. Outputs still to add from outline §2.8: PostGIS load, COG + STAC catalogue.
+7. Outputs still to add from outline §2.8: COG for the aggregated rasters, GeoParquet next to the GeoPackage (PostGIS load and STAC done).
 8. Re-export 2024 of every SIDRA table: the 2024 values on disk come from exports in which 2024 was still preliminary (warning `sidra_<t>_2024_not_from_a_preliminary_export`).
+9. Cut-off dates of the ANP ethanol/biodiesel exports and of the MapBiomas infrastructure layers (CIBiogás, ANEEL, SIF): not recorded yet (`cutoff: null`, warning in `checks_plants.json`).

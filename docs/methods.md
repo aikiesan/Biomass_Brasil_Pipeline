@@ -166,7 +166,73 @@ Outputs: `h2_mixed_effects`, `h2_model_fit`, `h2_rf_importance`, `h2_moran`.
   municipal N1, using only municipality × crop cells present in both variants.
 * National N1 totals are computed but are **not** a result of the paper.
 
-## 7. Municipal sanitation (platform feed, not part of the paper)
+## 7. Processing plants (verification 2)
+
+`bbp run plants` builds one national register (`interim/plants.parquet`, GeoParquet; `processed/plants.parquet`).
+
+* **Sources.** ANP ethanol plants (cane and corn) and biodiesel plants (Painel Dinâmico, points); ANP biomethane
+  open data (capacity per plant and month, production per state and month); CIBiogás biogas plants, ANEEL SIGA
+  biomass power plants and MAPA SIF slaughterhouses (points, through the MapBiomas infrastructure layers).
+* **One row per plant function.** `family` is the function (sugarcane mill, corn ethanol, biodiesel, biogas,
+  biomethane, biomass power, slaughterhouse); capacity stays in the unit of its source (`capacity_unit`). A flex
+  ethanol plant (cane + corn) is one source record in two families; both rows share one `site_id`, so the plant
+  is counted once as a site. Rows of other registers that are the same site are linked to it: each bagasse power
+  plant joins its nearest sugarcane mill and each biogas power plant its nearest CIBiogás biogas plant, within
+  `site_link_km` (2 km); an ANP biomethane plant joins the single CIBiogás GNR/biomethane plant of its
+  municipality, if there is one. Linking is nearest-only, so a power plant between two mills never merges them.
+* **Status.** `operating` = in operation or expanding (ANP, ANEEL, CIBiogás, SIF statuses); `status_reason`
+  says why not. ANP biomethane: the plants recorded in the snapshot month (`plants.sources.anp_biomethane.snapshot`)
+  operate; a plant whose last record is older is kept, not operating (e.g. Gasgrid / ZEG, São Paulo: no record
+  since 06/2022). The biomethane open data has no coordinates: plants are placed at the municipality's
+  representative point (`located = municipality`).
+* **Biomethane snapshots** (`processed/plants_biomethane_snapshots`): per snapshot month, plants, authorised
+  capacity, biogas capacity and processed biogas (m³/d) and production (m³ in the month and m³/d). The
+  production file mixes two notations: a point is a decimal separator ('4324235.558') except in values of one to
+  three digits followed by groups of exactly three ('173.037' = 173,037 m³), which are read as thousands and
+  checked against the output implied by processed biogas.
+* **Checks** (`checks_plants.json`): every source found and its cut-off recorded; coordinates present and inside
+  Brazil (coastal points: nearest municipality within 5 km); each point inside the municipality the source
+  declares (warning above 5 % per source); possible duplicates (same family and source, < 2 km, different sites);
+  capacity present where the family needs it; count by family and source; biomethane snapshot against the
+  figures quoted for it; the ANP operating mills against the CONAB 2025 and MapBiomas/EPE 2018 registers (share
+  with a unit within 2 km and 10 km, `processed/plants_register_match`).
+
+## 8. Crop area within reach of existing plants (verification 2)
+
+`bbp reach` (30 m, resumable; `plants.reach` in `pipeline.yaml`).
+
+* **Crops** from the MapBiomas Collection 11 coverage raster and the second-crop raster of the same year
+  (2024): sugarcane (class 20), soybean (39), second-season corn (second-crop value 1, whatever the first-season
+  class), all crops (coverage classes 20, 35, 39, 40, 41, 46, 47, 48, 62 or second-crop values 1, 41, 62; a pixel
+  counts once). Pixel area is geodesic (WGS84, per row). Each pixel belongs to the municipality whose polygon
+  holds its centre (the label grid of `bbp border-share`).
+* **Pairs** (crop → family): sugarcane → sugarcane mill, second-season corn → corn ethanol, soybean → biodiesel,
+  all crops → biogas, all crops → biomethane. Only operating plants count.
+* **Distance** is the straight-line distance from each pixel centre to the nearest plant of the family: a great
+  circle on the mean Earth sphere (R = 6371.0088 km), found with a KD tree on unit vectors. It differs from the
+  WGS84 geodesic by < 0.6 % (< 200 m at 30 km; checked on random pairs), whereas a planar distance in SIRGAS 2000 /
+  Brazil Polyconic would be off by up to 5.5 % at the edges of the country. Buffers are therefore geodesic
+  circles; no road network is used (a declared choice: the same distance at every resolution).
+* **Accumulation.** Per pair, municipality and 1 km distance bin to 150 km (one overflow bin beyond), the crop
+  area (`reach_hist`); nationally, 1 km bins to 2000 km (`reach_distance`); the number of plants of the family
+  within 30 km (`reach_competition`, capped at 10). The area within r km of a unit is the sum of its bins below
+  r, at every level (municipality, intermediate region, state, nation: `reach_units`, with mean and median
+  distance and the plants in the unit), so all levels add up to the same national total (checked).
+* **Sugarcane mills** (`reach_mills`): the cane area in 1 km rings around every mill to 150 km; the cane a mill
+  needs = crushing-class midpoint / 75 t ha⁻¹; required radius (smallest radius holding that area), supply
+  ratio within each radius, the share of the cane within 30 km that also has another operating mill within 30 km
+  (contested), and the number of other operating mills within 30 km. The same cane may supply several mills
+  (as in Cervi et al. 2019); contested shares say how much.
+* **Aggregation check.** The same distances measured from the centre of each pixel's 16 × 16 cell (~480 m)
+  give the shares a land-cover aggregation would give (`reach_aggregation_check`); the difference is reported in
+  percentage points. The cells are also written as a raster (`reach_cells_f16.tif`: crop area and area within
+  30 km per crop and pair).
+* **Checks** (`checks_reach.json`): every crop's area in the pass against the published statistics (Col. 11
+  coverage classes; second-crop zonal statistics), share of crop area outside the mesh, every pair holding its
+  whole crop, levels adding up, shares in [0, 1] and growing with the radius, the sphere vs WGS84, the
+  aggregation effect, and the headline numbers (share within each radius, mills short of cane, competition).
+
+## 9. Municipal sanitation (platform feed, not part of the paper)
 
 `bbp run sanitation` builds one series of urban solid waste, sewage and
 population per municipality from the two federal sanitation surveys. It feeds
