@@ -26,6 +26,8 @@ TABLES = [
     "unit_ratios_uf", "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
     "sanitation", "sanitation_continuity",
     "h2_mixed_effects", "h2_model_fit", "h2_rf_importance", "h2_moran",
+    "plants", "plants_biomethane_snapshots", "plants_register_match",
+    "reach_units", "reach_hist", "reach_distance", "reach_competition", "reach_mills", "reach_aggregation_check",
 ]
 
 
@@ -73,7 +75,10 @@ def git_commit(repo: Path) -> str | None:
 
 
 def _inputs(cfg: Config) -> list[Path]:
+    from bbp.plants import source_paths
+
     paths = [p for _, p in cfg.input_files()]
+    paths.extend(source_paths(cfg).values())
     for key in ("second_crop_tif_dir", "coverage_tif_dir"):
         if key in cfg.raw["inputs"] and (tif_dir := cfg.input_path(key)).is_dir():
             paths.extend(sorted(tif_dir.glob("*.tif")))

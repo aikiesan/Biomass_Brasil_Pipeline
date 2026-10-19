@@ -40,6 +40,15 @@ TABLE_TITLES = {
     "h2_model_fit": "H2 model fit per crop (mixed model, random forest)",
     "h2_rf_importance": "H2 random forest permutation importance",
     "h2_moran": "H2 Moran's I of the mixed-model residuals",
+    "plants": "Processing plants (ANP, CIBiogás, ANEEL, MAPA SIF): one row per plant function, sites linked",
+    "plants_biomethane_snapshots": "ANP biomethane plants, authorised capacity and production per snapshot month",
+    "plants_register_match": "ANP cane mills against the CONAB and MapBiomas/EPE registers (share within 2/10 km)",
+    "reach_units": "Crop area within reach of existing plants, by radius, at municipality, region, state, nation",
+    "reach_hist": "Crop area per municipality in 1 km bins of distance to the nearest plant (30 m pixels)",
+    "reach_distance": "National crop area by distance to the nearest plant, 1 km bins to 2000 km",
+    "reach_competition": "Crop area by number of plants within the competition radius",
+    "reach_mills": "Sugarcane mills: cane within each radius, required radius, supply ratio, contested cane",
+    "reach_aggregation_check": "Share within reach from 30 m pixels vs from ~480 m cells",
 }
 
 
