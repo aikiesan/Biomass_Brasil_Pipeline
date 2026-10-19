@@ -230,3 +230,70 @@ database:
   sidra_tables: [1612, 1613, 3939, 74, 94, 3940]
   sidra_exclude_variables: [value_thousand_brl]
   # processed/sanitation.parquet goes to bbp.sanitation (view bbp.v_sanitation)
+
+# -----------------------------------------------------------------------------
+# Processing plants (`bbp run plants` -> interim/plants.parquet, processed/plants*.parquet) and the crop area
+# within reach of them (`bbp reach`, 30 m, resumable -> processed/reach_*.parquet). Paths relative to raw_root.
+# `cutoff`: the date the source was exported (null = not recorded yet; reported as a warning).
+# -----------------------------------------------------------------------------
+plants:
+  sources:
+    anp_ethanol: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/Plantas de etanol.csv",
+                  label: "ANP — ethanol plants (Painel Dinâmico)", cutoff: null}
+    anp_biodiesel: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/Plantas de biodiesel.csv",
+                    label: "ANP — biodiesel plants (Painel Dinâmico)", cutoff: null}
+    # ANP biomethane open data: plants of the `snapshot` month operate; older plants are kept, not operating.
+    # `history`: earlier snapshots summarised for the record only (plants_biomethane_snapshots).
+    anp_biomethane:
+      path: "biometano-dados-abertos/Biometano_DadosAbertos_CSV_Capacidade.csv"
+      production: "biometano-dados-abertos/Biometano_DadosAbertos_CSV_Producao.csv"
+      label: "ANP — biomethane open data (capacity, production)"
+      snapshot: "08/2026"
+      history: ["04/2026"]
+      # figures quoted for the August 2026 cut-off (paper brief); checked, not used
+      expected: {plants: 21, authorised_m3d: 1370000, produced_m3d: 530000}
+      expected_tolerance: 0.02
+    biogas: {path: "MapBiomas_Update_2025_Colecao_11/structure_biogas_plant/usina_biogas.shp",
+             label: "CIBiogás BiogasMap (MapBiomas infrastructure layer)", cutoff: null}
+    biomass_power: {path: "MapBiomas_Update_2025_Colecao_11/structure_biomass_thermal_power_plant/Usinas_Termele╠ütricas_UTE_Biomassa.shp",
+                    label: "ANEEL SIGA biomass power plants (MapBiomas infrastructure layer)", cutoff: null}
+    slaughterhouses: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/mapbiomas_infra/structure_slaughterhouse/frigorificos.shp",
+                      label: "MAPA SIF slaughterhouses (MapBiomas infrastructure layer)", cutoff: null}
+  # other registers of the cane mills: where the ANP mills are is checked against them (share within 2 km)
+  registers:
+    conab: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/conab/UNIDADE_PRODUCAO_ETANOL_ACUCAR_BR_ATIVAS_2025.zip",
+            label: "CONAB active units 2025", min_share_2km: 0.70}
+    epe: {path: "MapBiomas_Update_2025_Colecao_11/structure_ethanol_plant/usina_etanol.shp",
+          label: "MapBiomas / EPE webmap 2018"}
+  # one site, several functions: rows of these families closer than site_link_km are the same site
+  site_links:
+    - [sugarcane_mill, "biomass_power:bagasse"]
+    - [biogas, "biomass_power:biogas"]
+  site_link_km: 2.0
+  duplicate_km: 2.0             # same family and source, closer than this, different sites: possible duplicate
+  capacity_required: [sugarcane_mill, corn_ethanol, biodiesel, biomethane, biomass_power]
+  reach:
+    year: 2024                  # coverage raster and second-crop raster of this year
+    radii_km: [10, 20, 30, 50, 75, 100]
+    bin_km: 1                   # distance histograms: 1 km bins to max_km per municipality, to 2000 km nationally
+    max_km: 150
+    ring_max_km: 150            # sugarcane mills: cane area in 1 km rings up to this distance (as the exploratory x03)
+    competition_km: 30          # plants of the paired family within this distance of each pixel
+    competition_cap: 10
+    # cane a mill needs: crushing class midpoint / yield (assumption, CONAB 2024/25 national ~75 t/ha)
+    cane_yield_t_ha: 75
+    window: 4096                # pixels per side of a processing window
+    check_factor: 16            # aggregation check: the same distances from 480 m cell centres
+    # crops by MapBiomas class: `coverage` classes of the coverage raster, `second_crop` values of the
+    # second-crop raster; a pixel in both counts once
+    crops:
+      sugarcane: {coverage: [20]}
+      soybean: {coverage: [39]}
+      corn_2nd: {second_crop: [1]}
+      all_crops: {coverage: [20, 35, 39, 40, 41, 46, 47, 48, 62], second_crop: [1, 41, 62]}
+    pairs:
+      - {crop: sugarcane, family: sugarcane_mill}
+      - {crop: corn_2nd, family: corn_ethanol}
+      - {crop: soybean, family: biodiesel}
+      - {crop: all_crops, family: biogas}
+      - {crop: all_crops, family: biomethane}

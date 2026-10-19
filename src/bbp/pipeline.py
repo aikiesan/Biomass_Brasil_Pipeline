@@ -485,6 +485,18 @@ def stage_second_crop(cfg: Config, ck: CheckLog, years: list[int] | None = None,
 
 
 # ---------------------------------------------------------------------------
+# processing plants (one national register; bbp reach reads it)
+# ---------------------------------------------------------------------------
+def stage_plants(cfg: Config, ck: CheckLog) -> None:
+    from bbp.plants import build_plants
+
+    if not cfg.section("plants").get("sources"):
+        ck.add("plants_configured", False, "no plants.sources in pipeline.yaml", severity="warn")
+        return
+    build_plants(cfg, ck)
+
+
+# ---------------------------------------------------------------------------
 # harmonise
 # ---------------------------------------------------------------------------
 def stage_harmonise(cfg: Config, ck: CheckLog) -> None:
@@ -686,6 +698,7 @@ def stage_publish(cfg: Config, ck: CheckLog) -> Path:
 STAGE_FUNCS = {
     "ingest": stage_ingest,
     "sanitation": stage_sanitation,
+    "plants": stage_plants,
     "harmonise": stage_harmonise,
     "area": stage_area,
     "reconcile": stage_reconcile,

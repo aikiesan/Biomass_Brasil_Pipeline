@@ -8,8 +8,8 @@
     bbp border-share [--years 2024]   crop area near municipal borders (coverage rasters; long, resumable)
     bbp landcover [--years 2024 2025] [--budget 150]
                                       Fig 1 land-cover display rasters from the 30 m coverage (resumable)
-    bbp plants                        processing plants of Brazil in one table (data/interim/plants.parquet)
-    bbp reach                         crop area around the plants: catchments, distances, MAUP test (reach_*)
+    bbp plants                        processing plants of Brazil in one register (same as bbp run plants)
+    bbp reach [--budget 600]          crop area within reach of the plants from the 30 m pixels (long; resumable)
     bbp explore [--only x01 x04]      exploratory figures, each element also on its own (data/paper/explore)
     bbp check-factors                 compare conversion_factors.yaml with the CP2b canonical YAML
     bbp paper [--no-figures]          paper numbers.json, Tables 1–4 and Figs 1–6 (profile `paper` by default)
@@ -71,6 +71,10 @@ def cmd_info(cfg) -> int:
     print(f"years      : {cfg.years[0]}–{cfg.years[-1]}")
     for key, p in cfg.input_files():
         print(f"  [{'ok' if p.exists() else 'MISSING':7}] {key}: {p}")
+    from bbp.plants import source_paths
+
+    for key, p in source_paths(cfg).items():
+        print(f"  [{'ok' if p.exists() else 'MISSING':7}] plants.{key}: {p}")
     return 0
 
 
@@ -144,7 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     lcp.add_argument("--budget", type=float, default=None,
                      help="stop after this many seconds and resume on the next call (default: run to the end)")
     sub.add_parser("plants", help="processing plants (ANP, CIBiogás, ANEEL, MAPA) -> data/interim/plants.parquet")
-    sub.add_parser("reach", help="crop area around the plants (needs bbp landcover counts and bbp plants)")
+    rp = sub.add_parser("reach", help="crop area within reach of the plants, 30 m (long; resumable)")
+    rp.add_argument("--budget", type=float, default=None,
+                    help="stop after this many seconds and resume on the next call (default: run to the end)")
     xp = sub.add_parser("explore", help="exploratory figures on the plants and their surroundings")
     xp.add_argument("--only", nargs="*", help="figure keys, e.g. x01 x04 (default: all)")
     pp = sub.add_parser("paper", help="numbers.json, Tables 1–4 and the figures of the paper")
@@ -202,10 +208,16 @@ def main(argv: list[str] | None = None) -> int:
                             keep_going=True)
             return 0 if ok else 1
         if args.command in ("plants", "reach", "explore"):
-            from bbp import explore, plants, reach
+            if args.command == "plants":
+                func = pipeline.stage_plants
+            elif args.command == "reach":
+                from bbp import reach
 
-            func = {"plants": plants.build_plants, "reach": reach.run,
-                    "explore": lambda c, ck: explore.build(c, ck, only=args.only)}[args.command]
+                func = lambda c, ck: reach.run(c, ck, budget=args.budget)  # noqa: E731
+            else:
+                from bbp import explore
+
+                func = lambda c, ck: explore.build(c, ck, only=args.only)  # noqa: E731
             ok = _run_stage(args.command, func, cfg, keep_going=True)
             return 0 if ok else 1
         if args.command == "border-share":
