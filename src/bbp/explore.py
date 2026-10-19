@@ -35,8 +35,8 @@ CONSTRUCTION = "white"
 PAIR_LABEL = {
     "sugarcane|sugarcane_mill": "Sugarcane → sugarcane mill",
     "sugarcane|biomass_power|bagasse": "Sugarcane → bagasse power plant",
-    "soy_corn2|corn_ethanol": "2nd-season corn → corn ethanol",
-    "soy_all|biodiesel": "Soybean → biodiesel plant",
+    "corn_2nd|corn_ethanol": "2nd-season corn → corn ethanol",
+    "soybean|biodiesel": "Soybean → biodiesel plant",
     "soy_all|biogas": "Soybean → biogas plant",
     "pasture|slaughterhouse": "Pasture → slaughterhouse",
     "all_crops|biogas": "All crops → biogas plant",
@@ -44,13 +44,13 @@ PAIR_LABEL = {
 }
 PAIR_SHORT = {
     "sugarcane|sugarcane_mill": "Cane → mill", "sugarcane|biomass_power|bagasse": "Cane → bagasse power",
-    "soy_corn2|corn_ethanol": "2nd corn → corn ethanol", "soy_all|biodiesel": "Soybean → biodiesel",
+    "corn_2nd|corn_ethanol": "2nd corn → corn ethanol", "soybean|biodiesel": "Soybean → biodiesel",
     "soy_all|biogas": "Soybean → biogas", "pasture|slaughterhouse": "Pasture → slaughterhouse",
     "all_crops|biogas": "All crops → biogas", "all_crops|biomethane": "All crops → biomethane",
 }
 PAIR_COLOR = {
     "sugarcane|sugarcane_mill": fs.CROP_COLORS["sugarcane"], "sugarcane|biomass_power|bagasse": "#7fc9a8",
-    "soy_corn2|corn_ethanol": fs.CROP_COLORS["corn_2nd"], "soy_all|biodiesel": fs.CROP_COLORS["soybean"],
+    "corn_2nd|corn_ethanol": fs.CROP_COLORS["corn_2nd"], "soybean|biodiesel": fs.CROP_COLORS["soybean"],
     "soy_all|biogas": "#7fb3d9", "pasture|slaughterhouse": "#a0784a", "all_crops|biogas": "#555555",
     "all_crops|biomethane": "#b0b0b0",
 }
@@ -362,8 +362,8 @@ def x02_sp_mills(ctx: Ctx):
     cv.text(x_b + 46.0, ly - 0.2, f"SP: {len(in_sp)} mills\nmedian {med:.0f} km", fontsize=fs.FS_ITEM, va="center",
             linespacing=1.25)
     cv.scale(1.0, 1.4, S, seg_km=100, n=1, bh=0.6, compact=True)
-    cv.text(22.0, 0.8, f"1:{S * 1000:,.0f}. Great-circle distance from each mill to every 480 m cell of 30 m cane "
-            "pixels (all states). Data: ANP; MapBiomas Col. 11. NIPE/Unicamp",
+    cv.text(22.0, 0.8, f"1:{S * 1000:,.0f}. Great-circle distance from each mill to every 30 m cane pixel "
+            "(all states). Data: ANP; MapBiomas Col. 11. NIPE/Unicamp",
             fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom")
     cv.panel("legend", 0.5, 0.0, FW - 0.5, LEG - 0.5)
     ctx.ck.add("x02_sp", True, f"{len(in_sp)} SP mills; median required radius {med:.1f} km", med)
@@ -483,7 +483,7 @@ def x03_mill_catchments(ctx: Ctx):
             fontweight="bold", va="bottom")
     cv.panel("d_competition", X[1] - 10.5, Y[1] - 8.5, FW - 0.5, Y[1] + H + 10.5)
     cv.text(1.0, 0.8, f"Sugarcane mills: ANP ({len(mills)}; crushing class midpoints). Cane: MapBiomas Col. 11 "
-            f"{ctx.year}, 30 m pixels counted per 480 m cell; great-circle distances. After Cervi et al. (2019).",
+            f"{ctx.year}, 30 m pixels; great-circle distances. After Cervi et al. (2019).",
             fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom")
     ctx.ck.add("x03_supply_ratio_below_1", True, f"{short:.1%} of mills have < their need within 30 km", short)
     return cv
@@ -492,8 +492,8 @@ def x03_mill_catchments(ctx: Ctx):
 # ---------------------------------------------------------------------------
 # x04 — distance from every crop cell to the nearest plant
 # ---------------------------------------------------------------------------
-X04_PAIRS = ["sugarcane|sugarcane_mill", "sugarcane|biomass_power|bagasse", "soy_corn2|corn_ethanol",
-             "soy_all|biodiesel", "soy_all|biogas", "all_crops|biogas", "pasture|slaughterhouse",
+X04_PAIRS = ["sugarcane|sugarcane_mill", "sugarcane|biomass_power|bagasse", "corn_2nd|corn_ethanol",
+             "soybean|biodiesel", "soy_all|biogas", "all_crops|biogas", "pasture|slaughterhouse",
              "all_crops|biomethane"]
 
 
@@ -514,7 +514,7 @@ def x04_distance(ctx: Ctx):
             continue
         cdf = t["area_ha"].cumsum() / t["area_ha"].sum()
         x = t["bin_km"].to_numpy() + 1
-        lw = 1.1 if pair in ("sugarcane|sugarcane_mill", "soy_all|biodiesel", "soy_corn2|corn_ethanol") else 0.75
+        lw = 1.1 if pair in ("sugarcane|sugarcane_mill", "soybean|biodiesel", "corn_2nd|corn_ethanol") else 0.75
         a.plot(x, cdf, color=PAIR_COLOR[pair], lw=lw, ls=PAIR_LS.get(pair, "-"))
         k = np.searchsorted(x, 300)
         ends.append((PAIR_LABEL[pair].split(" → ")[0] + " → " + PAIR_LABEL[pair].split(" → ")[1].replace(" plant", ""),
@@ -554,7 +554,7 @@ def x04_distance(ctx: Ctx):
             va="top")
     for e in ends:
         a.plot([e[1]], [e[2]], marker="o", ms=2.0, color=e[3], mec="white", mew=0.2, clip_on=False)
-    cv.text(1.0, 0.8, f"Crop cells: MapBiomas Col. 11 {ctx.year} (30 m area per 480 m cell). Plants operating "
+    cv.text(1.0, 0.8, f"Crop pixels: MapBiomas Col. 11 {ctx.year}, 30 m (2nd-season corn: second-crop layer). Plants operating "
             "(ANP, CIBiogás, ANEEL, MAPA). Great-circle distance: road distances are longer.", fontsize=fs.FS_CRED,
             color=fs.MUTED, va="bottom")
     cv.panel("a_cdf", 0.5, 7.5, 64.0, FH - 0.3)
@@ -567,7 +567,7 @@ def x04_distance(ctx: Ctx):
 # ---------------------------------------------------------------------------
 # x05 — MAUP access test
 # ---------------------------------------------------------------------------
-X05_PAIRS = ["sugarcane|sugarcane_mill", "soy_corn2|corn_ethanol", "soy_all|biodiesel", "all_crops|biogas",
+X05_PAIRS = ["sugarcane|sugarcane_mill", "corn_2nd|corn_ethanol", "soybean|biodiesel", "all_crops|biogas",
              "pasture|slaughterhouse", "all_crops|biomethane"]
 
 
@@ -628,8 +628,8 @@ def x05_maup(ctx: Ctx):
 # x06 — intermediate regions: share within reach
 # ---------------------------------------------------------------------------
 X06_MAPS = [("sugarcane|sugarcane_mill", 30, "Sugarcane within 30 km of a mill"),
-            ("soy_all|biodiesel", 50, "Soybean within 50 km of a biodiesel plant"),
-            ("soy_corn2|corn_ethanol", 50, "2nd-season corn within 50 km of a corn ethanol plant"),
+            ("soybean|biodiesel", 50, "Soybean within 50 km of a biodiesel plant"),
+            ("corn_2nd|corn_ethanol", 50, "2nd-season corn within 50 km of a corn ethanol plant"),
             ("all_crops|biogas", 30, "All crops within 30 km of a biogas plant")]
 SHARE_EDGES = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0001]
 SHARE_LABELS = ["< 10 %", "10–25 %", "25–50 %", "50–75 %", "75–90 %", "≥ 90 %"]
@@ -722,7 +722,7 @@ def x07_typology(ctx: Ctx):
     FW, FH = fs.FULL_W, 77.0
     cv = Canvas(FW, FH)
     panels = [("all_crops|biogas", 30, "(a) All crops vs biogas plants, 30 km"),
-              ("soy_all|biodiesel", 50, "(b) Soybean vs biodiesel plants, 50 km")]
+              ("soybean|biodiesel", 50, "(b) Soybean vs biodiesel plants, 50 km")]
     W, H = 50.0, 52.0
     for i, (pair, r, title) in enumerate(panels):
         x, y = 12.0 + i * (W + 16.0), 17.0
@@ -778,23 +778,22 @@ def x07_typology(ctx: Ctx):
 # ---------------------------------------------------------------------------
 @register("x08", "x08_registers_biomethane")
 def x08_registers(ctx: Ctx):
-    import geopandas as gpd
 
-    from bbp.plants import read_anp_biomethane, read_conab_mills
+    from bbp.plants import read_conab_mills, read_epe_mills
     from bbp.reach import haversine_km
 
     if ctx.plants is None:
         return None
     cfg = ctx.cfg
-    cx = {k: cfg.raw_root / v for k, v in (cfg.section("plants").get("context") or {}).items()}
+    cx = {k: cfg.raw_root / (v["path"] if isinstance(v, dict) else v)
+          for k, v in (cfg.section("plants").get("registers") or {}).items()}
     anp = ctx.plants[ctx.plants["family"] == "sugarcane_mill"].to_crs("EPSG:4674")
     anp_op = anp[anp["operating"].fillna(True).astype(bool)]
     regs = {"ANP 2026 (operating)": anp_op}
-    if cx.get("conab_mills") and cx["conab_mills"].exists():
-        regs["CONAB 2025 (active)"] = read_conab_mills(cx["conab_mills"])
-    if cx.get("mapbiomas_ethanol") and cx["mapbiomas_ethanol"].exists():
-        me = gpd.read_file(cx["mapbiomas_ethanol"]).to_crs("EPSG:4674")
-        regs["MapBiomas / EPE 2018"] = me[me["Situacao"] == "Operando"]
+    if cx.get("conab") and cx["conab"].exists():
+        regs["CONAB 2025 (active)"] = read_conab_mills(cx["conab"])
+    if cx.get("epe") and cx["epe"].exists():
+        regs["MapBiomas / EPE 2018"] = read_epe_mills(cx["epe"])
     FW, FH = fs.FULL_W, 70.0
     cv = Canvas(FW, FH)
     # (a) mills per state, three registers
@@ -842,35 +841,33 @@ def x08_registers(ctx: Ctx):
     cv.panel("b_register_match", 47.0, 2.0, 84.0, FH - 0.3)
     # (c) biomethane plants: capacity, estimated output, the mandate
     c = cv.ax(98.0, 13.0, 32.0, FH - 20.0)
-    bm_path = (cfg.section("plants").get("sources") or {}).get("anp_biomethane")
-    if bm_path and (cfg.raw_root / bm_path).exists():
-        d = pd.read_csv(cfg.raw_root / bm_path)
-        d["out"] = d["vol_biogas_m3d"] * d["cap_biometano_m3d"] / d["cap_biogas_m3d"]
-        d = d.sort_values("cap_biometano_m3d")
-        cane = d["razao_social"].str.contains("COCAL|RAÍZEN|RAIZEN|ADECOAGRO|SANTA CRUZ|BIOENERGIA", case=False)
-        yy = np.arange(len(d))
-        c.barh(yy, d["cap_biometano_m3d"] / 1e3, color=np.where(cane, "#a8dcc6", "#d0d0d0"), height=0.75,
+    bm = ctx.plants[ctx.plants["family"] == "biomethane"]
+    bm = bm[bm["operating"].astype(bool)].sort_values("capacity")
+    snaps = ctx.proc / "plants_biomethane_snapshots.parquet"
+    if len(bm):
+        mill_sites = ctx.plants.loc[ctx.plants["family"] == "sugarcane_mill", "site_id"]
+        cane = bm["site_id"].isin(mill_sites) | bm["name"].str.contains(
+            "COCAL|RAÍZEN|RAIZEN|ADECOAGRO|SANTA CRUZ|BIOENERGIA", case=False)
+        yy = np.arange(len(bm))
+        c.barh(yy, bm["capacity"] / 1e3, color=np.where(cane, fs.CROP_COLORS["sugarcane"], "#5a5a5a"), height=0.75,
                edgecolor="none", label="Authorised capacity")
-        c.barh(yy, d["out"] / 1e3, color=np.where(cane, fs.CROP_COLORS["sugarcane"], "#5a5a5a"), height=0.38,
-               label="Est. output (biogas used)")
-        c.set_yticks(yy, [f"{u}" for u in d["uf"]], fontsize=fs.FS_TEXT - 1.4)
+        c.set_yticks(yy, [f"{u}" for u in bm["uf"]], fontsize=fs.FS_TEXT - 1.4)
         c.set_xlabel("Biomethane (1,000 m³/day)")
         c.grid(axis="x", color=fs.FAINT, lw=0.4)
-        cap, out = d["cap_biometano_m3d"].sum() / 1e6, d["out"].sum() / 1e6
-        c.text(0.98, 0.03, f"{len(d)} plants\ncapacity {cap:.2f} M m³/d\noutput ≈ {out:.2f} M m³/d\n"
-               "mandate 2026 (0.5 %) ≈ 0.50\nmandate 2027 (1 %) ≈ 1.0", transform=c.transAxes, ha="right",
-               va="bottom", fontsize=fs.FS_TEXT - 1.0, linespacing=1.25,
-               bbox={"fc": "white", "ec": "none", "alpha": 0.9, "pad": 0.6})
-        c.legend(loc="lower right", bbox_to_anchor=(1.0, 0.36), fontsize=fs.FS_ITEM - 0.6, handlelength=1.0,
-                 borderaxespad=0.1)
-        ctx.ck.add("x08_biomethane", True, f"capacity {cap:.2f}, est. output {out:.2f} M m³/d", out)
-        del read_anp_biomethane
+        lines = [f"{len(bm)} plants", f"authorised {bm['capacity'].sum() / 1e6:.2f} M m³/d"]
+        if snaps.exists():
+            s = pd.read_parquet(snaps).iloc[-1]
+            lines += [f"produced {s['produced_m3d'] / 1e6:.2f} M m³/d ({s['snapshot']})"]
+        c.text(0.98, 0.03, "\n".join(lines), transform=c.transAxes, ha="right", va="bottom",
+               fontsize=fs.FS_TEXT - 1.0, linespacing=1.25, bbox={"fc": "white", "ec": "none", "alpha": 0.9,
+                                                                    "pad": 0.6})
+        ctx.ck.add("x08_biomethane", True, "; ".join(lines), float(bm["capacity"].sum()))
     cv.text(86.0, FH - 1.0, "(c) Biomethane plants (green: cane mills)", fontsize=fs.FS_LABEL, fontweight="bold",
             va="top")
     cv.panel("c_biomethane", 85.0, 2.0, FW - 0.5, FH - 0.3)
-    cv.text(1.0, 0.6, "Data: ANP ethanol plants; ANP biomethane open data, Apr 2026 (output = biogas used × "
-            "biomethane/biogas capacity); CONAB 2025;\nMapBiomas infrastructure (EPE webmap 2018). Mandate "
-            "yardsticks: Lei 14.993/2024 and CNPE targets on natural-gas use.", fontsize=fs.FS_CRED,
+    cv.text(1.0, 0.6, "Data: ANP ethanol plants; ANP biomethane open data (capacity and production, snapshot set in "
+            "pipeline.yaml); CONAB 2025;\nMapBiomas infrastructure (EPE webmap 2018). The mandate ruler is drawn "
+            "separately (Phase 3).", fontsize=fs.FS_CRED,
             color=fs.MUTED, va="bottom", linespacing=1.3)
     for k, s2, s10 in lab_b:
         ctx.ck.add(f"x08_match_{k.split(' ')[0]}", True, f"{s2:.1%} of ANP mills within 2 km, {s10:.1%} within 10 km",

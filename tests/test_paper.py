@@ -83,6 +83,7 @@ def _write_run(data_dir, cfg):
 @pytest.fixture
 def run(tmp_path, monkeypatch):
     monkeypatch.setenv("BBP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("BBP_RAW_ROOT", str(tmp_path / "raw"))   # no source data, as in CI, on any machine
     cfg = load_config(profile="paper")
     area = _write_run(tmp_path, cfg)
     return cfg, area
