@@ -143,6 +143,7 @@ bbp landcover [--budget 150]   # Fig 1 land-cover display rasters from the 30 m 
                                # bbp figures builds them on first use otherwise)
 bbp run plants                 # processing plants (ANP, CIBiogás, ANEEL, MAPA SIF): one register, checked
 bbp reach [--budget 600]       # crop area within reach of the plants from the 30 m pixels (resumable)
+bbp scale                      # the same reach at the pixel, the municipality and the region (MAUP)
 bbp explore [--only x01 x04]   # exploratory figures x01–x08, each element also on its own (data/paper/explore)
 bbp --profile paper run ...    # any command with config/profiles/paper.yaml merged over pipeline.yaml
 ```

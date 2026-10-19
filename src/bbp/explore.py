@@ -568,14 +568,18 @@ def x04_distance(ctx: Ctx):
 # x05 — MAUP access test
 # ---------------------------------------------------------------------------
 X05_PAIRS = ["sugarcane|sugarcane_mill", "corn_2nd|corn_ethanol", "soybean|biodiesel", "all_crops|biogas",
-             "pasture|slaughterhouse", "all_crops|biomethane"]
+             "all_crops|biomethane"]
+X05_RULE = "area_fraction"           # bbp.scale: the main rule (centroid and representative point: sensitivity)
 
 
 @register("x05", "x05_maup_access")
 def x05_maup(ctx: Ctx):
-    maup = ctx.t("maup")
-    if maup is None:
+    sc = ctx.t("scale")
+    if sc is None:
         return None
+    sc = sc[np.isfinite(sc["radius_km"]) & sc["rule"].isin(["pixel", X05_RULE])]
+    maup = sc.assign(level=sc["resolution"].map({"pixel": "pixel", "municipality": "municipality",
+                                                  "rgint": "intermediate region"}))
     FW = fs.FULL_W
     ncol, w, h, gx, gy = 3, 32.0, 26.0, 11.0, 13.0
     FH = 2 * (h + gy) + 11.0
@@ -614,12 +618,13 @@ def x05_maup(ctx: Ctx):
         cv.text(x - 9.5, y + h + 1.3, f"({letter(i)}) {PAIR_LABEL[pair]}", fontsize=fs.FS_TITLE + 0.2,
                 fontweight="bold", va="bottom")
         cv.panel(f"{letter(i)}_{pair.replace('|', '_')}", x - 10.5, y - 7.0, x + w + 1.0, y + h + 5.0)
-    rows = [("line", (c, 0.8, ls), f"from the {lev}" + (" (30 m, true)" if lev == "pixel" else "'s point"))
+    rows = [("line", (c, 0.8, ls), f"from the {lev}" + (" (30 m, true)" if lev == "pixel" else "'s land"))
             for lev, (c, ls, _) in LEVEL_STYLE.items()]
     cv.legend(x0 - 9.5, 9.0, [("Distance measured", rows)], header=None)
-    cv.text(58.0, 5.0, "Same land, same plants. A municipality (or region) counts whole when its\nrepresentative "
-            "point is within the radius. Red: the gap at 30 km between reading\nreach from statistical units and "
-            "from the 30 m pixels.", fontsize=fs.FS_CRED, color=fs.MUTED, va="center", linespacing=1.3)
+    cv.text(58.0, 5.0, "Same land, same plants. A unit's crop is spread like its land: its share within\nreach is "
+            "the share of its land within the radius (bbp scale). Red: the gap at 30 km\nbetween reading reach "
+            "from statistical units and from the 30 m pixels.", fontsize=fs.FS_CRED, color=fs.MUTED, va="center",
+            linespacing=1.3)
     cv.panel("legend", 0.5, 0.0, FW - 0.5, 10.5)
     return cv
 

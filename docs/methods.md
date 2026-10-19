@@ -232,7 +232,30 @@ Outputs: `h2_mixed_effects`, `h2_model_fit`, `h2_rf_importance`, `h2_moran`.
   whole crop, levels adding up, shares in [0, 1] and growing with the radius, the sphere vs WGS84, the
   aggregation effect, and the headline numbers (share within each radius, mills short of cane, competition).
 
-## 9. Municipal sanitation (platform feed, not part of the paper)
+## 9. Scale as a property of the system (MAUP)
+
+`bbp scale` (after `bbp reach`; `plants.scale` in `pipeline.yaml`). The same land and the same plants, reach
+measured at three resolutions, for every pair and for radii of 10–2000 km plus an infinite radius.
+
+* **Pixel** (reference): each 30 m crop pixel at its own distance (`reach_hist` below 150 km, the national 1 km
+  curve `reach_distance` above).
+* **Municipality** and **intermediate region**: what a study with statistical units knows, the unit's crop area
+  (the 30 m area summed per unit, so every resolution holds the same land) and its geometry.
+  * `area_fraction` (main rule): the crop is spread over the unit like its land; the share within r km is the
+    share of the unit's land within r km of the nearest operating plant. Land area comes from the ~480 m cells
+    of `reach_cells_f16.tif` (cell centre in the municipality, geodesic cell area); per municipality it matches
+    the IBGE area to a median of 0.15 %. A unit with no cell falls back to its centroid.
+  * `centroid` (sensitivity): the unit counts whole when its centroid (taken in SIRGAS 2000 / Brazil Polyconic)
+    is within r km.
+  * `representative_point`: the same with a point inside the polygon, the rule of the exploratory x05.
+* **Outputs:** `reach_scale` (pair × radius × resolution × rule, national) and `reach_scale_units` (per
+  municipality and intermediate region).
+* **Checks** (`checks_scale.json`): every resolution and rule reaches 100 % at an infinite radius; the area
+  within grows with the radius; the same crop area at every resolution; the land grid against the IBGE areas;
+  the headline gaps at 30 km; and the exploratory x05 (representative points, 480 m cells, April register)
+  against the new values.
+
+## 10. Municipal sanitation (platform feed, not part of the paper)
 
 `bbp run sanitation` builds one series of urban solid waste, sewage and
 population per municipality from the two federal sanitation surveys. It feeds

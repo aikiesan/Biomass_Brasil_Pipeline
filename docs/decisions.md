@@ -6,6 +6,8 @@ One line per decision, newest first. Open items are at the end.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-19 | Scale (MAUP): main rule = area fraction (a unit's crop spread like its land); centroid and representative point as sensitivity; pixel as reference | A statistical unit knows its crop area and its geometry, not where the crop sits inside it; the point rules are what most regional studies do |
+| 2026-10-19 | Unit land area from the ~480 m cells (cell centre in the municipality) | Matches the IBGE municipal areas to a median 0.15 %; a 30 m pass over all land would add hours for no visible gain |
 | 2026-10-19 | Reach measured from the 30 m pixels (coverage + second crop 2024), not from aggregated cells; the ~480 m cells kept only as a check of the aggregation effect | The pixel is the reference resolution of the funnel; the check shows how much aggregation would move the result |
 | 2026-10-19 | Distance = great circle on the mean sphere (straight line, geodesic buffers), not planar EPSG:5880 | Polyconic distorts a 30 km radius by up to 5.5 % at the edges of Brazil; the sphere is within 0.6 % of WGS84 everywhere |
 | 2026-10-19 | Second-season corn = every corn pixel of the second-crop raster, whatever the first-season class | The register question is about all second-season corn, not only corn after soybean (14.07 vs 14.75 Mha in 2024) |
