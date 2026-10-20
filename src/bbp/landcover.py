@@ -348,7 +348,7 @@ def aggregate(coverage: Path | list[Path], out_dir: Path, name: str, factors: tu
     cdst = rasterio.open(cpath, "r+") if cpath is not None else None
     try:
         for b in range(int(meta["bands_done"]), n_bands):
-            if time_budget is not None and time.time() - t_start > time_budget:
+            if time_budget is not None and time.time() - t_start >= time_budget:
                 break
             ra = r0 + b * band_rows
             rb = min(ra + band_rows, r1)

@@ -395,7 +395,7 @@ def accumulate(label_tif: Path, coverage: Path, second_crop: Path | None, plants
     lab_ds, cov_ds, cache = rasterio.open(label_tif), rasterio.open(coverage), {}
     try:
         for k in range(start, len(windows)):
-            if (budget is not None and time.time() - t0 > budget) or (stop_after is not None and k - start >= stop_after):
+            if (budget is not None and time.time() - t0 >= budget) or (stop_after is not None and k - start >= stop_after):
                 break
             win = windows[k]
             lab = lab_ds.read(1, window=win)
