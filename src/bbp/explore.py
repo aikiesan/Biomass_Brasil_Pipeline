@@ -1134,17 +1134,19 @@ def reach_result(ctx: Ctx, host=None):
         return None
     pairs = [p for p in REACH_PAIRS if p in set(dist["pair"])]
     FW = fs.FULL_W
-    gap = 1.2
-    w = (FW - 2.0 - (len(pairs) - 1) * gap) / len(pairs)
+    ncol, gap = 3, 5.0                            # maps in rows of three; the legend takes the free cell
+    w = (FW - 2.0 - (ncol - 1) * gap) / ncol
     ext = ctx.ext
     S = nice_scale((ext[1] - ext[0]) / w)
     MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
-    LEG, TT, CH = 12.5, 7.0, 46.0                 # legend band, map titles, chart height
-    FH = LEG + MH + TT + 4.0 + CH + 7.0
+    nrow = int(np.ceil((len(pairs) + 1) / ncol))
+    CR, TT, RG, CH = 3.5, 4.5, 3.0, 44.0          # credit line, map titles, gap between rows, chart height
+    maps_top = CR + nrow * (MH + TT + RG) - RG
+    FH = maps_top + 4.0 + CH + 7.0
     cv = fs.canvas(FW, FH, host)
 
     # ---- the curves -------------------------------------------------------------------------------------------
-    ya = LEG + MH + TT + 4.0 + 9.0
+    ya = maps_top + 4.0 + 9.0
     a = cv.ax(15.0, ya, 73.0, CH - 9.0)
     stats = {}
     for pair in pairs:
@@ -1190,11 +1192,15 @@ def reach_result(ctx: Ctx, host=None):
     colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
     mun = units[(units["level"] == "municipality") & (units["radius_km"] == REACH_RADIUS)]
     g = ctx.g[["geocode", "geometry"]]
-    y = LEG
-    cv.text(1.0, y + MH + TT - 0.3, f"Where: share of each municipality's crop area within {REACH_RADIUS:.0f} km",
+    cv.text(1.0, maps_top + 2.6, f"Where: share of each municipality's crop area within {REACH_RADIUS:.0f} km",
             fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+
+    def cell(i):
+        r, c = divmod(i, ncol)
+        return 1.0 + c * (w + gap), CR + (nrow - 1 - r) * (MH + TT + RG)
+
     for i, pair in enumerate(pairs):
-        x = 1.0 + i * (w + gap)
+        x, y = cell(i)
         a = cv.map_ax(x, y, ext, S)
         t = mun[mun["pair"] == pair].assign(geocode=lambda d: d["unit"].astype("int64")).set_index("geocode")
         m = g.assign(share=g["geocode"].map(t["share"]), area=g["geocode"].map(t["crop_area_ha"]).fillna(0))
@@ -1212,14 +1218,16 @@ def reach_result(ctx: Ctx, host=None):
         cv.text(x + 0.3, y + MH + 0.4, REACH_TITLE[pair], fontsize=fs.FS_ITEM, fontweight="bold", va="bottom")
         cv.text(x + MW - 0.3, y + 0.4, f"{100 * stats[pair][0]:.1f} %", fontsize=fs.FS_ITEM, ha="right",
                 va="bottom")
-    rows = [("patch", {"fc": c, "ec": "#7a7a7a"}, lab) for c, lab in zip(colors, SHARE_LABELS, strict=True)]
-    cv.legend(1.0, LEG - 0.8, [("", rows[:3])], header=None)
-    cv.legend(23.0, LEG - 0.8, [("", rows[3:])], header=None)
-    cv.legend(45.0, LEG - 0.8, [("", [("patch", {"fc": "#f1f1f1", "ec": "#7a7a7a"},
-                                       f"< {REACH_MIN_HA:.0f} ha of the crop"),
-                                      ("dot", (1.8, "white", PLANT_INK, 0.3), "operating plant")])], header=None)
-    cv.north(FW - 4.0, LEG - 7.5, h=3.5)
-    cv.scale(FW - 25.0, LEG - 7.7, S, seg_km=1000, n=1, compact=True)
+    xl, yl = cell(len(pairs))                     # the free cell: legend, north arrow, scale bar
+    rows = [("patch", {"fc": c, "ec": "#7a7a7a"}, lab) for c, lab in zip(colors[::-1], SHARE_LABELS[::-1],
+                                                                          strict=True)]
+    cv.legend(xl + 2.0, yl + MH + TT - 1.0, [(f"Crop area within {REACH_RADIUS:.0f} km", rows),
+                                             ("", [("patch", {"fc": "#f1f1f1", "ec": "#7a7a7a"},
+                                                    f"< {REACH_MIN_HA:.0f} ha of the crop"),
+                                                   ("dot", (1.8, "white", PLANT_INK, 0.3), "operating plant")])],
+              header=None)
+    cv.north(xl + w - 4.0, yl + 6.0, h=3.5)
+    cv.scale(xl + 2.0, yl + 1.5, S, seg_km=1000, n=1, compact=True)
     cv.text(FW - 1.0, 0.4, f"MapBiomas Col. 11 {ctx.year}, 30 m; plants: ANP, CIBiogás. EPSG:5880. "
             + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, ha="right", va="bottom")
     return cv
