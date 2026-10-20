@@ -1570,54 +1570,70 @@ def municipal_source_effect(n1: pd.DataFrame, years: list[int]) -> pd.DataFrame:
 
 
 def fig09_source_vs_factors(cfg: Config, ck: CheckLog, data: _Data, host=None):
-    import matplotlib.pyplot as plt
+    """Fig 6 (H3), one row per crop: how far municipal N1 moves when the area source changes, for the typical
+    municipality (median) and for the 10 % most divergent (90th percentile), against the grey band of what the
+    conversion factors alone can do (all factors jointly, min to max). Numbers as in Table 4."""
+    from matplotlib.patches import Rectangle
 
-    n1 = data.get("n1_municipal")
     sve = data.get("source_vs_factor_effect")
     years = summary_years(cfg)
-    eff = municipal_source_effect(n1, years)
-    env = sve[sve["year"].isin(years)].groupby("crop")[["factor_envelope_log", "factor_oat_bmp_log"]].mean()
-    crops = [c for c in cfg.crops if c in set(eff["crop"]) and c in env.index]
-    q = eff.groupby("crop")["abs_log"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).unstack()
-    row = 7.5
-    FW, FH = fs.FULL_W, len(crops) * row + 22.0
+    m = sve[sve["year"].isin(years) & (sve["n_both"] > 0)].groupby("crop")[
+        ["source_median_abs_log", "source_p90_abs_log", "factor_envelope_log"]].mean()
+    crops = [c for c in cfg.crops if c in m.index and m.loc[c, "source_p90_abs_log"] > 0]
+    n, rh = len(crops), 6.4
+    y0 = 11.0
+    FW, FH = fs.FULL_W, y0 + n * rh + 12.0
     cv = fs.canvas(FW, FH, host)
-    a = _chart_axes(cv, 22.0, 12.0, fs.FULL_W - 23.0, len(crops) * row + 4.0)
-    ys = np.arange(len(crops))[::-1]
+    xa, wa = 22.0, 82.0
+    a = _chart_axes(cv, xa, y0, wa, n * rh)
+    ys = np.arange(n)[::-1]
+    xmax = float(m.loc[crops, ["source_p90_abs_log", "factor_envelope_log"]].max().max()) * 1.06
     for y, c in zip(ys, crops, strict=True):
-        e, b = env.loc[c, "factor_envelope_log"], env.loc[c, "factor_oat_bmp_log"]
-        a.add_patch(plt.Rectangle((0, y - 0.36), e, 0.72, color="#e6e6e6", lw=0, zorder=0))
-        a.add_patch(plt.Rectangle((0, y - 0.36), b, 0.72, color="#cdcdcd", lw=0, zorder=0))
-        r = q.loc[c]
+        med, p90, env = m.loc[c, ["source_median_abs_log", "source_p90_abs_log", "factor_envelope_log"]]
+        a.add_patch(Rectangle((0, y - 0.32), env, 0.64, color="#e2e2e2", lw=0, zorder=0))
+        a.plot([env, env], [y - 0.32, y + 0.32], color=fs.MUTED, lw=0.6, zorder=1)
         col = fs.CROP_COLORS[c]
-        a.plot([r[0.1], r[0.9]], [y, y], color=col, lw=0.8, solid_capstyle="butt", zorder=2,
-               path_effects=_casing(c, 0.8))
-        a.plot([r[0.25], r[0.75]], [y, y], color=col, lw=3.0, solid_capstyle="butt", zorder=2,
-               path_effects=_casing(c, 3.0))
-        a.plot(r[0.5], y, "o", ms=4.4, color="white", mec=fs.INK, mew=0.8, zorder=3)
-        a.plot(r[0.9], y, "|", ms=6.5, color=fs.INK, mew=1.0, zorder=3)
-    top = ys[0]
-    r0 = q.loc[crops[0]]
-    lab = {"fontsize": fs.FS_ITEM, "color": fs.MUTED, "ha": "center", "va": "bottom"}
-    arr = {"arrowstyle": "-", "lw": 0.3, "color": fs.MUTED}
-    a.annotate("median", (r0[0.5], top + 0.12), xytext=(r0[0.5], top + 0.65), arrowprops=arr, **lab)
-    a.annotate("90th percentile", (r0[0.9], top + 0.12), xytext=(r0[0.9], top + 0.65), arrowprops=arr, **lab)
-    cb = crops[-1]
-    a.text(env.loc[cb, "factor_oat_bmp_log"] - 0.03, ys[-1] - 0.5, "factors: BMP only", fontsize=fs.FS_ITEM,
-           color=fs.MUTED, ha="right", va="top")
-    a.text(env.loc[cb, "factor_envelope_log"] - 0.03, ys[-1] - 0.5, "all factors jointly", fontsize=fs.FS_ITEM,
-           color=fs.MUTED, ha="right", va="top")
-    a.set_yticks(ys, [fs.label(c) for c in crops])
-    a.set_ylim(-1.0, len(crops) - 0.05)
-    xmax = float(max(q[0.9].max(), env["factor_envelope_log"].max())) * 1.04
-    a.set_xlim(0, xmax)
-    _factor_axis(a, "x", 0, xmax, "Difference between N$_1$ from observed and from declared area, per "
-                 "municipality (×, either direction)")
+        a.plot([med, p90], [y, y], color=col, lw=1.0, zorder=2, path_effects=_casing(c, 1.0))
+        a.plot(med, y, "o", ms=4.6, mfc="white", mec=col, mew=1.3, zorder=3)
+        a.plot(p90, y, "o", ms=4.6, color=col, mec=fs.INK, mew=0.4, zorder=3)
+    a.set_yticks(ys, [fs.label(c) for c in crops], fontsize=fs.FS_ITEM)
     a.tick_params(axis="y", length=0)
     a.spines["left"].set_visible(False)
+    a.set_ylim(-0.6, n - 0.4)
+    a.set_xlim(0, xmax)
     a.grid(axis="x", color=fs.FAINT, lw=0.4, zorder=0)
-    ck.add("fig09_median_below_envelope", bool((q[0.5].reindex(crops) < env.loc[crops, "factor_envelope_log"]).all()),
-           "median source effect below the factor envelope for every crop", severity="warn")
+    _factor_axis(a, "x", 0, xmax, "How much municipal N$_1$ changes (×, either direction)")
+
+    # right: the comparison as numbers, area source ÷ factors
+    xr0, xr1 = xa + wa + 9.0, xa + wa + 21.0
+    cv.text((xr0 + xr1) / 2, y0 + n * rh + 4.0, "area source ÷ factors", fontsize=fs.FS_CRED, ha="center",
+            va="bottom", fontweight="bold")
+    cv.text(xr0, y0 + n * rh + 0.8, "typical", fontsize=fs.FS_CRED, ha="center", va="bottom", color=fs.MUTED)
+    cv.text(xr1, y0 + n * rh + 0.8, "top 10 %", fontsize=fs.FS_CRED, ha="center", va="bottom", color=fs.MUTED)
+    for i, c in enumerate(crops):
+        yc = y0 + (n - 1 - i + 0.5) * rh
+        for x, v in ((xr0, m.loc[c, "source_median_abs_log"]), (xr1, m.loc[c, "source_p90_abs_log"])):
+            r = v / m.loc[c, "factor_envelope_log"]
+            cv.text(x, yc, f"{r:.2f}".replace(".", "."), fontsize=fs.FS_ITEM, ha="center", va="center",
+                    color=fs.DETAIL if r > 1 else fs.INK, fontweight="bold" if r > 1 else "normal")
+
+    cv.text((xr0 + xr1) / 2, y0 - 1.5, "red: > 1, the area\nsource moves N$_1$ more\nthan the factors",
+            fontsize=fs.FS_CRED, ha="center", va="top", color=fs.DETAIL, linespacing=1.15)
+    # key on top, read as a sentence
+    ky, kx = FH - 2.2, xa
+    cv.ov.plot([kx + 1.2], [ky], "o", ms=4.0, mfc="white", mec=fs.INK, mew=1.1)
+    cv.text(kx + 2.8, ky, "typical municipality (median)", fontsize=fs.FS_CRED, va="center")
+    kx += 36.0
+    cv.ov.plot([kx + 1.2], [ky], "o", ms=4.0, color=fs.MUTED, mec=fs.INK, mew=0.4)
+    cv.text(kx + 2.8, ky, "the 10 % most divergent (90th pct.)", fontsize=fs.FS_CRED, va="center")
+    ky2, kx = ky - 3.6, xa
+    cv.ov.add_patch(Rectangle((kx, ky2 - 0.9), 3.0, 1.8, color="#e2e2e2", lw=0))
+    cv.ov.plot([kx + 3.0, kx + 3.0], [ky2 - 0.9, ky2 + 0.9], color=fs.MUTED, lw=0.6)
+    cv.text(kx + 4.2, ky2, "what the conversion factors alone can change (min to max)", fontsize=fs.FS_CRED,
+            va="center")
+    ratio = (m.loc[crops, "source_median_abs_log"] / m.loc[crops, "factor_envelope_log"])
+    ck.add("fig09_median_below_envelope", bool((ratio < 1).all()),
+           f"typical source effect / factor envelope: {ratio.min():.2f}–{ratio.max():.2f}", severity="warn")
     return cv
 
 

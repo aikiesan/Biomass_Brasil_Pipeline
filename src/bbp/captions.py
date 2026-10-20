@@ -115,11 +115,12 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             "standard deviation, in the colours of Fig 4 (red: the satellite sees more; blue: less); faded and "
             "light: the 95 % confidence interval crosses zero; —: predictor not in the model.",
         "source_vs_factors":
-            f"Area source against conversion factors (H3): multiplicative difference between municipal N₁ "
-            f"computed from observed and from declared area, {s0}–{s1} (municipality-years with both > 0; "
-            "thin line 10th–90th percentile, thick line interquartile range, open circle median, tick 90th "
-            "percentile), against the spread of N₁ over the literature factor ranges (grey band: all factors "
-            "jointly, min to max; darker: BMP alone).",
+            f"Which matters more for municipal N₁: the area source or the conversion factors? (H3), mean "
+            f"{s0}–{s1}. Dots: how much municipal N₁ changes when observed area replaces declared area "
+            "(multiplicative, either direction; municipalities with both > 0), for the typical municipality "
+            "(open, median) and the 10 % most divergent (filled, 90th percentile). Grey band: how much N₁ changes "
+            "over the literature ranges of all conversion factors jointly (min to max). Right: the two as a "
+            "ratio, area source ÷ factors (Table 4); red where the area source moves N₁ more.",
         "distance_to_plants":
             f"Crop within reach of existing plants, MapBiomas Collection 11 {year}, 30 m pixels (second-season "
             "corn: second-crop layer). (a) Cumulative share of each crop's area by great-circle distance to the "
