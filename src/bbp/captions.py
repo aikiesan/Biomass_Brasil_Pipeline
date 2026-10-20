@@ -108,11 +108,12 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             "Below each map: the share of the declared area within ±25 %. The other crops: Fig S15. SIRGAS 2000 / "
             "Brazil Polyconic.",
         "h2_drivers":
-            f"Why the sources diverge (H2): municipal ln(A_obs/A_dec), {s0}–{s1}, mixed model per crop. "
-            "(a) Standardised effects of the predictors, change per standard deviation with 95 % confidence "
-            "intervals. (b) Share of the variance explained by the predictors (marginal R²), by the intermediate "
-            "region (random intercept) and left as residual; right: Moran's I of the residuals (queen "
-            "contiguity; * p < 0.05).",
+            f"Why the sources diverge (H2): municipal ln(A_obs/A_dec), {s0}–{s1}, one mixed model per crop "
+            "(rows). Left: share of the variance explained by the predictors (marginal R²), by the intermediate "
+            "region (random intercept) and left unexplained, and Moran's I of the residuals (queen "
+            "contiguity; * p < 0.05). Right: standardised effect of each predictor, change in ln(A_obs/A_dec) per "
+            "standard deviation, in the colours of Fig 4 (red: the satellite sees more; blue: less); faded and "
+            "light: the 95 % confidence interval crosses zero; —: predictor not in the model.",
         "source_vs_factors":
             f"Area source against conversion factors (H3): multiplicative difference between municipal N₁ "
             f"computed from observed and from declared area, {s0}–{s1} (municipality-years with both > 0; "

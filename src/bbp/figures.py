@@ -1965,13 +1965,119 @@ def _explore(name: str, **kw):
     return draw
 
 
+HEAT_PREDICTOR = {"log_mun_area_ha": "Municipal\narea", "crop_share": "Crop\nshare", "log_double_crop": "Double\ncropping",
+                  "irrigated_share": "Irrigated\nshare", "border_share_1km": "Near a\nborder",
+                  "log_landsat_valid_obs": "Clear\nLandsat obs."}
+
+
+def _group_head(cv: Canvas, x0: float, x1: float, y: float, text: str):
+    """A column-group heading, as in a table: bold, centred over its columns, with a rule under it."""
+    cv.text((x0 + x1) / 2, y, text, fontsize=fs.FS_TITLE + 0.4, fontweight="bold", ha="center", va="top")
+    cv.ov.plot([x0, x1], [y - 3.2, y - 3.2], color=fs.INK, lw=0.4)
+
+
 def fig_h2(cfg: Config, ck: CheckLog, data: _Data, host=None):
-    """Fig 5: effects of the predictors (old Fig 8) over the variance shares and Moran's I (old Fig 7)."""
-    st = fs.Stack(gap=3.0, ck=ck)
-    st.add("a", lambda h: fig08_h2_effects(cfg, ck, data, host=h), head="(a) Standardised effects of the predictors")
-    st.add("b", lambda h: fig07_h2_variance(cfg, ck, data, host=h),
-           head="(b) Share of the variance explained; Moran's I of the residuals")
-    return st.draw()
+    """Fig 5, one row per crop read across: (a) what explains the divergence (variance shares of the mixed model
+    and Moran's I of its residuals), (b) what each predictor does (standardised effects as a heat table, in the
+    colours of Fig 4: red, the satellite sees more; blue, less; faded where the 95 % interval crosses zero)."""
+    from matplotlib import colormaps
+    from matplotlib.colors import Normalize
+    from matplotlib.patches import Rectangle
+
+    fit, moran, coefs = data.get("h2_model_fit"), data.get("h2_moran"), data.get("h2_mixed_effects")
+    if not ck.add("fig05_h2_tables", fit is not None and moran is not None and coefs is not None, "H2 tables",
+                  severity="warn"):
+        return None
+    crops = [c for c in cfg.crops if c in set(fit["crop"])]
+    preds = [p for p in NUMERIC if p in set(coefs["term"])]
+    f = fit.set_index("crop").reindex(crops)
+    mi = moran.set_index("crop").reindex(crops)
+    fixed = f["r2_marginal"].fillna(0).to_numpy()
+    region = f["region_variance_share"].fillna(0).to_numpy()
+    resid = np.clip(1 - fixed - region, 0, None)
+
+    n, rh = len(crops), 5.2                             # rows (mm)
+    y0 = 9.0                                            # bottom of the rows: axis and key under it
+    FW, FH = fs.FULL_W, y0 + n * rh + 10.5
+    cv = fs.canvas(FW, FH, host)
+    ov = cv.ov
+    top = y0 + n * rh
+    yc = [top - (i + 0.5) * rh for i in range(n)]        # row centres, first crop on top
+    for y, c in zip(yc, crops, strict=True):
+        cv.text(20.0, y, fs.label(c), fontsize=fs.FS_ITEM, ha="right", va="center")
+
+    # ---- (a) what explains the divergence -------------------------------------------------------------------
+    xa, wa = 21.5, 43.0
+    parts = [(fixed, "#3b3b3b", "white", "predictors"), (region, "#9a9a9a", fs.INK, "region"),
+             (resid, "#e3e3e3", fs.INK, "unexplained")]
+    left = np.zeros(n)
+    for vals, col, txt, _ in parts:
+        for i in range(n):
+            ov.add_patch(Rectangle((xa + left[i] * wa, yc[i] - rh * 0.34), vals[i] * wa, rh * 0.68, fc=col,
+                                   ec="white", lw=0.5))
+            if vals[i] >= 0.08:
+                cv.text(xa + (left[i] + vals[i] / 2) * wa, yc[i], f"{vals[i] * 100:.0f} %", fontsize=fs.FS_CRED,
+                        ha="center", va="center", color=txt)
+        left += vals
+    for t in (0, 0.5, 1.0):                               # axis
+        ov.plot([xa + t * wa] * 2, [y0 - 0.2, y0 - 0.9], color=fs.INK, lw=0.4)
+        cv.text(xa + t * wa, y0 - 1.2, f"{t * 100:.0f} %", fontsize=fs.FS_CRED, ha="center", va="top")
+    ov.plot([xa, xa + wa], [y0 - 0.2, y0 - 0.2], color=fs.INK, lw=0.4)
+    cv.text(xa + wa / 2, y0 - 4.3, "share of the variance of ln(A$_{obs}$ / A$_{dec}$)", fontsize=fs.FS_CRED,
+            ha="center", va="top", color=fs.MUTED)
+    kx = xa                                               # key above the bars
+    for _, col, _, lab in parts:
+        ov.add_patch(Rectangle((kx, top + 1.0), 2.6, 1.8, fc=col, ec="#7a7a7a", lw=0.3))
+        cv.text(kx + 3.3, top + 1.9, lab, fontsize=fs.FS_CRED, va="center")
+        kx += 3.3 + len(lab) * 0.85 + 2.5
+    xm = xa + wa + 6.5                                    # Moran's I of the residuals
+    cv.text(xm, top + 1.0, "Moran's I\n(residuals)", fontsize=fs.FS_CRED, ha="center", va="bottom",
+            linespacing=1.1)
+    for y, c in zip(yc, crops, strict=True):
+        i_, p_ = mi.loc[c, "morans_i"], mi.loc[c, "p_value"]
+        if np.isfinite(i_):
+            cv.text(xm, y, f"{i_:.2f}{_sig(p_)}".replace("-", "−"), fontsize=fs.FS_ITEM, ha="center", va="center")
+    _group_head(cv, xa, xm + 6.0, FH - 0.8, "What explains the divergence")
+
+    # ---- (b) what each predictor does ------------------------------------------------------------------------
+    xb = 82.0
+    cw = (FW - 1.0 - xb) / len(preds)
+    sub = coefs[coefs["term"].isin(preds)]
+    span = float(np.ceil(sub["estimate"].abs().max() * 10) / 10) or 0.5
+    cmap, norm = colormaps["RdBu_r"], Normalize(-span, span)
+    for j, p in enumerate(preds):
+        cv.text(xb + (j + 0.5) * cw, top + 1.0, HEAT_PREDICTOR.get(p, p), fontsize=fs.FS_CRED, ha="center",
+                va="bottom", linespacing=1.1)
+        cp = sub[sub["term"] == p].set_index("crop")
+        for i, c in enumerate(crops):
+            x = xb + j * cw
+            if c not in cp.index:
+                ov.add_patch(Rectangle((x, yc[i] - rh / 2), cw, rh, fc="white", ec="white", lw=0.8))
+                cv.text(x + cw / 2, yc[i], "—", fontsize=fs.FS_CRED, ha="center", va="center", color=fs.MUTED)
+                continue
+            r = cp.loc[c]
+            sig = r["ci_low"] > 0 or r["ci_high"] < 0
+            ov.add_patch(Rectangle((x, yc[i] - rh / 2), cw, rh, fc=cmap(norm(r["estimate"])),
+                                   alpha=1.0 if sig else 0.3, ec="white", lw=0.8))
+            dark = sig and abs(r["estimate"]) > 0.6 * span
+            cv.text(x + cw / 2, yc[i], f"{r['estimate']:+.2f}".replace("-", "−"), fontsize=fs.FS_CRED,
+                    ha="center", va="center", color="white" if dark else (fs.INK if sig else fs.MUTED),
+                    fontweight="bold" if sig else "normal")
+    # key under the table: the colour scale read as Fig 4, and what faded means
+    kb, kw = xb, FW - 1.0 - xb
+    steps = 40
+    for k in range(steps):
+        v = -span + 2 * span * (k + 0.5) / steps
+        ov.add_patch(Rectangle((kb + k * kw / steps, y0 - 2.4), kw / steps + 0.02, 1.6, fc=cmap(norm(v)), lw=0))
+    cv.text(kb, y0 - 3.1, "← satellite sees less", fontsize=fs.FS_CRED, ha="left", va="top")
+    cv.text(kb + kw, y0 - 3.1, "sees more →", fontsize=fs.FS_CRED, ha="right", va="top")
+    cv.text(kb + kw / 2, y0 - 5.6, "per SD of the predictor; faded: 95 % CI crosses 0", fontsize=fs.FS_CRED,
+            ha="center", va="top", color=fs.MUTED)
+    _group_head(cv, xb, FW - 1.0, FH - 0.8, "What each predictor does")
+    strongest = sub.loc[sub["estimate"].abs().idxmax()]
+    ck.add("fig05_strongest_effect", True, f"{strongest['crop']} × {strongest['term']}: {strongest['estimate']:+.2f}",
+           float(strongest["estimate"]))
+    return cv
 
 
 def fig_reach(cfg: Config, ck: CheckLog, data: _Data, host=None):
