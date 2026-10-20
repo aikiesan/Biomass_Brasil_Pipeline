@@ -11,8 +11,9 @@ reach tables (bbp.reach); the land cover of Fig 1 as ground.
   x04  distance from every crop cell to the nearest plant: curves and shares within 10–100 km
   x05  the MAUP access test: the same land "within reach" at pixel, municipality and region level
   x06  intermediate regions: share of crop area within reach (maps)
-  x07  intermediate-region typology: crop area vs share within reach, plants
-  x08  registers compared (ANP, CONAB, MapBiomas/EPE) and the biomethane plants against the mandate
+  x07  intermediate-region typology (bbp demo): types, share within reach, N1 against reach, priorities
+  x08  registers compared (ANP, CONAB, MapBiomas/EPE) and the biomethane plants
+  x08c the biomethane mandate ruler (bbp demo): targets, ANP flows, the stock within reach
 """
 
 from __future__ import annotations
@@ -96,6 +97,11 @@ class Ctx:
             p = self.proc / f"reach_{name}.parquet"
             self._t[name] = pd.read_parquet(p) if p.exists() else None
         return self._t[name]
+
+    def d(self, name: str) -> pd.DataFrame | None:
+        """A table of bbp demo (data/processed/demo_<name>.parquet)."""
+        p = self.proc / f"demo_{name}.parquet"
+        return pd.read_parquet(p) if p.exists() else None
 
     def regions(self):
         if not hasattr(self, "_rg"):
@@ -719,62 +725,108 @@ UF_REGION = {**dict.fromkeys(["AC", "AP", "AM", "PA", "RO", "RR", "TO"], "N"),
              **dict.fromkeys(["PR", "RS", "SC"], "S")}
 
 
+TYPE_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#9c755f", "#76b7b2", "#edc948", "#ff9da7"]
+MINOR = "#e6e6e6"
+
+
 @register("x07", "x07_region_typology")
 def x07_typology(ctx: Ctx):
-    rgt, rgp = ctx.t("rgint"), ctx.t("rgint_plants")
-    if rgt is None:
+    """Typology of the intermediate regions (bbp demo): (a) types from the CLR crop composition, (b) share of all
+    crops within 30 km of a biogas plant, (c) N1 against that share, plants as marker size, priorities named."""
+    from matplotlib import colormaps
+
+    from bbp.figures import nice_scale
+
+    ty = ctx.d("typology")
+    if ty is None:
         return None
-    FW, FH = fs.FULL_W, 77.0
+    rg = ctx.regions()
+    ext = ctx.ext
+    FW, gap = fs.FULL_W, 3.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT, SCH, LEG = 4.4, 46.0, 12.0
+    FH = MH + TT + SCH + 14.0 + LEG
     cv = Canvas(FW, FH)
-    panels = [("all_crops|biogas", 30, "(a) All crops vs biogas plants, 30 km"),
-              ("soybean|biodiesel", 50, "(b) Soybean vs biodiesel plants, 50 km")]
-    W, H = 50.0, 52.0
-    for i, (pair, r, title) in enumerate(panels):
-        x, y = 12.0 + i * (W + 16.0), 17.0
-        a = cv.ax(x, y, W, H)
-        t = rgt[rgt["pair"] == pair].copy()
-        t = t[t["area_ha"] > 10_000]
-        t["share"] = t[f"within_{r}km_ha"] / t["area_ha"]
-        t["reg"] = t["uf"].map(UF_REGION)
-        fam = pair.split("|")[1]
-        n = rgp[rgp["family"] == fam].set_index("cd_rgint")["n"] if rgp is not None else pd.Series(dtype=float)
-        t["n"] = t["cd_rgint"].map(n).fillna(0)
-        for reg, c in REGION_COLORS.items():
-            s = t[t["reg"] == reg]
-            a.scatter(s["area_ha"] / 1e3, s["share"], s=2.5 + 3.0 * np.sqrt(s["n"]), c=c, alpha=0.85,
-                      edgecolors="white", linewidths=0.3, label=REGION_NAME[reg], zorder=3)
-        a.set_xscale("log")
-        a.set_ylim(-0.03, 1.03)
-        a.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
-        xm = np.median(t["area_ha"] / 1e3)
-        a.axvline(xm, color=fs.HAIR, lw=0.5, zorder=1)
-        a.axhline(0.5, color=fs.HAIR, lw=0.5, zorder=1)
-        big_far = t[(t["area_ha"] / 1e3 > xm) & (t["share"] < 0.5)].nlargest(5, "area_ha")
-        for j, (_, rw) in enumerate(big_far.sort_values("share").iterrows()):
-            a.annotate(str(rw["nm_rgint"]), (rw["area_ha"] / 1e3, rw["share"]),
-                       xytext=(xm * 0.9, 0.12 + 0.075 * j), textcoords="data", ha="right", va="center",
-                       fontsize=fs.FS_TEXT - 1.2, color=fs.INK,
-                       arrowprops={"arrowstyle": "-", "lw": 0.35, "color": fs.MUTED, "shrinkA": 1, "shrinkB": 1.5})
-        a.text(0.99, 0.49, "large, beyond reach", transform=a.transAxes, ha="right", va="top",
-               fontsize=fs.FS_TEXT - 0.6, color=fs.DETAIL, style="italic")
-        a.text(0.99, 0.99, "large, within reach", transform=a.transAxes, ha="right", va="top",
-               fontsize=fs.FS_TEXT - 0.6, color=fs.MUTED, style="italic")
-        a.set_xlim(8, None)
-        a.set_xlabel("Crop area of the intermediate region (kha, log)")
-        if i == 0:
-            a.set_ylabel("Share within the radius")
-        axis_style(a)
-        cv.text(x - 10.0, y + H + 1.5, title, fontsize=fs.FS_LABEL, fontweight="bold", va="bottom")
-        cv.panel(f"{letter(i)}_{pair.replace('|', '_')}", x - 11.0, y - 8.0, x + W + 1.0, y + H + 6.0)
-        ctx.ck.add(f"x07_{pair}_large_far", True, f"{len(t[(t['area_ha'] / 1e3 > xm) & (t['share'] < 0.5)])} "
-                   "regions above the median area with < 50 % in reach")
-    rows = [("dot", (6, c, "white", 0.3), REGION_NAME[k]) for k, c in REGION_COLORS.items()]
-    cv.legend(2.0, 7.4, [("", rows[:3])], header=None)
-    cv.legend(26.0, 7.4, [("", rows[3:])], header=None)
-    cv.text(54.0, 4.0, "Marker area proportional to number of plants of the family in the region.\nOne point per intermediate "
-            "region (IBGE, 133) with > 10 kha of the crop.", fontsize=fs.FS_CRED, color=fs.MUTED, va="center",
-            linespacing=1.3)
-    cv.panel("legend", 0.5, 0.0, FW - 0.5, 7.5)
+    ty = ty.set_index("cd_rgint")
+    names = ty[ty["cluster"] > 0].groupby("cluster")["cluster_name"].first()
+    col = {int(k): TYPE_COLORS[(int(k) - 1) % len(TYPE_COLORS)] for k in names.index}
+    col[0] = MINOR
+    share_col = "within_30km__all_crops__biogas"
+    # (a) types
+    y0 = FH - MH - TT + 0.2
+    a = cv.map_ax(1.0, y0, ext, S)
+    m = rg.assign(cluster=rg["cd_rgint"].map(ty["cluster"]).fillna(0).astype(int))
+    m.plot(ax=a, color=[col[c] for c in m["cluster"]], linewidth=0, zorder=1)
+    rg.boundary.plot(ax=a, color="white", linewidth=0.18, zorder=2)
+    ctx.states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.28, zorder=3)
+    ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+    map_frame(a, ext)
+    panel_title(cv, 1.0, y0 + MH + 0.4, "(a) Types of crop composition (CLR, Ward)")
+    cv.panel("a_types", 1.0, y0, 1.0 + MW, y0 + MH + TT - 0.2)
+    # (b) share within reach
+    x1 = 1.0 + w + gap
+    b = cv.map_ax(x1, y0, ext, S)
+    cmap = colormaps["YlGnBu"]
+    colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
+    mb = rg.assign(share=rg["cd_rgint"].map(ty[share_col]), minor=rg["cd_rgint"].map(ty["cluster"]).fillna(0) == 0)
+    mb[mb["minor"]].plot(ax=b, color="#f3f3f3", linewidth=0, zorder=1)
+    cls = np.digitize(mb.loc[~mb["minor"], "share"].fillna(0), SHARE_EDGES[1:-1])
+    mb.loc[~mb["minor"]].plot(ax=b, color=[colors[k] for k in cls], linewidth=0, zorder=1.2)
+    rg.boundary.plot(ax=b, color="white", linewidth=0.18, zorder=2)
+    ctx.states.boundary.plot(ax=b, color="#4d4d4d", linewidth=0.28, zorder=3)
+    ctx.country.boundary.plot(ax=b, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+    if ctx.plants is not None:
+        P = ctx.plants[(ctx.plants["family"] == "biogas") & ctx.plants["operating"].fillna(True).astype(bool)]
+        b.scatter(P["x"], P["y"], s=0.7, c=PLANT_INK, linewidths=0, zorder=5)
+    map_frame(b, ext)
+    panel_title(cv, x1, y0 + MH + 0.4, "(b) All crops within 30 km of a biogas plant")
+    cv.panel("b_within_reach", x1, y0, x1 + MW, y0 + MH + TT - 0.2)
+    # (c) N1 vs share within reach
+    ys = LEG + 9.0
+    c = cv.ax(12.0, ys, 74.0, SCH)
+    t = ty[ty["cluster"] > 0]
+    n = t["plants__biogas"].fillna(0)
+    for k in names.index:
+        s = t[t["cluster"] == k]
+        c.scatter(s["n1_ref_nm3"] / 1e9, s[share_col], s=3.0 + 2.2 * np.sqrt(n.loc[s.index]), c=col[int(k)],
+                  alpha=0.9, edgecolors="white", linewidths=0.3, zorder=3)
+    c.set_xscale("log")
+    c.set_ylim(-0.03, 1.03)
+    c.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    thr = t["n1_ref_nm3"].quantile(0.75) / 1e9
+    c.axvline(thr, color=fs.HAIR, lw=0.5, zorder=1)
+    c.axhline(0.25, color=fs.HAIR, lw=0.5, zorder=1)
+    pr = t[t["priority"]].sort_values("n1_ref_nm3", ascending=False)
+    for j, (_, r) in enumerate(pr.iterrows(), start=1):
+        c.scatter(r["n1_ref_nm3"] / 1e9, r[share_col], s=16, facecolors="none", edgecolors=fs.INK, linewidths=0.5,
+                  zorder=4)
+        c.annotate(str(j), (r["n1_ref_nm3"] / 1e9, r[share_col]), xytext=(2.5, 2.5 + 3.2 * (j % 3)),
+                   textcoords="offset points", fontsize=fs.FS_TEXT - 1.8, color=fs.INK, zorder=5)
+    c.set_xlim(left=0.01)
+    c.text(0.99, 0.97, "priority: top quartile of N1,\n< 25 % within 30 km", transform=c.transAxes, ha="right",
+           va="top", fontsize=fs.FS_TEXT - 1.0, color=fs.DETAIL, style="italic")
+    c.set_xlabel("N1 of the region's crop residues (billion Nm³ CH4/yr, log)")
+    c.set_ylabel("Within 30 km of a biogas plant")
+    axis_style(c)
+    panel_title(cv, 2.0, ys + SCH + 2.0, "(c) Residue against reach")
+    cv.panel("c_n1_vs_reach", 0.5, ys - 9.0, 88.0, ys + SCH + 6.0)
+    # legend: types, shares
+    rows = [("patch", {"fc": col[int(k)], "ec": "#7a7a7a"}, f"{int(k)}. {v}") for k, v in names.items()]
+    rows.append(("patch", {"fc": MINOR, "ec": "#7a7a7a"}, "minor agriculture"))
+    cv.legend(91.0, ys + SCH, [("Type (a, c)", rows)], header=None)
+    srows = [("patch", {"fc": cc, "ec": "#7a7a7a"}, lab) for cc, lab in zip(colors, SHARE_LABELS, strict=True)]
+    cv.legend(91.0, ys + SCH - (len(rows) + 2) * fs.ROW, [("Within 30 km (b)", srows)], header=None)
+    listing = "\n".join(f"{j}. {r.nm_rgint} ({r.uf})" for j, r in enumerate(pr.itertuples(), start=1))
+    cv.text(91.0, ys + SCH - (len(rows) + len(srows) + 5) * fs.ROW, "Priority regions (c):\n" + listing,
+            fontsize=fs.FS_ITEM - 0.6, va="top", linespacing=1.25)
+    cv.text(1.0, 0.6, "133 intermediate regions (IBGE 2017); MapBiomas Col. 11 2024 crop area, 30 m reach; N1 observed "
+            "variant, CP2b ref factors.\nMarker area: biogas plants in the region. " + fs.CREDIT_CARTO,
+            fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, va="bottom", linespacing=1.3)
+    cv.panel("legend", 89.0, ys - 9.0, FW - 0.5, ys + SCH + 6.0)
+    ctx.ck.add("x07_types", True, f"{len(names)} types; {int(t['priority'].sum())} priority regions",
+               int(t["priority"].sum()))
     return cv
 
 
@@ -877,6 +929,72 @@ def x08_registers(ctx: Ctx):
     for k, s2, s10 in lab_b:
         ctx.ck.add(f"x08_match_{k.split(' ')[0]}", True, f"{s2:.1%} of ANP mills within 2 km, {s10:.1%} within 10 km",
                    s2)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x08c — the biomethane mandate ruler
+# ---------------------------------------------------------------------------
+@register("x08c", "x08c_mandate_ruler")
+def x08c_mandate(ctx: Ctx):
+    """Biomethane mandate ruler (bbp demo): targets (official volumes; indicative ones hatched), ANP capacity and
+    production (flows, lines), N1 within reach of existing biomethane plants (stock, shaded band at the back)."""
+    tg, st = ctx.d("mandate_targets"), ctx.d("mandate_stock")
+    snaps = ctx.proc / "plants_biomethane_snapshots.parquet"
+    if tg is None or not snaps.exists():
+        return None
+    sn = pd.read_parquet(snaps)
+    cur = sn.iloc[-1]
+    FW, FH = fs.FULL_W, 70.0
+    cv = Canvas(FW, FH)
+    a = cv.ax(14.0, 16.0, 78.0, FH - 24.0)
+    yrs = tg["year"].to_numpy()
+    x0, x1 = yrs.min() - 0.6, yrs.max() + 0.6
+    top = 0.0
+    if st is not None:
+        s30 = st[(st["pair"] == "all_crops|biomethane") & (st["radius_km"] == 30)]
+        if len(s30):
+            r = s30.iloc[0]
+            a.axhspan(r["n1_min_m3d"] / 1e6, r["n1_max_m3d"] / 1e6, color="#dfeee6", zorder=0, lw=0)
+            a.axhline(r["n1_ref_m3d"] / 1e6, color="#9cc9b0", lw=0.7, ls=(0, (2, 1)), zorder=0.5)
+            a.text(x0 + 0.05, r["n1_max_m3d"] / 1e6 - 0.1, f"stock within 30 km: {r['n1_ref_m3d'] / 1e6:.1f} "
+                   f"({r['n1_min_m3d'] / 1e6:.1f}–{r['n1_max_m3d'] / 1e6:.1f}) M Nm³ CH4/d", fontsize=fs.FS_TEXT - 1.4,
+                   color="#3f7f5c", va="top")
+            top = max(top, r["n1_max_m3d"] / 1e6)
+    off = (tg["volume_source"] == "official").to_numpy()
+    vol = (tg["volume_m3d"] / 1e6).to_numpy()
+    a.bar(yrs[off], vol[off], width=0.5, color="#1a1a1a", zorder=3)
+    a.bar(yrs[~off], vol[~off], width=0.5, facecolor="white", edgecolor="#1a1a1a", lw=0.6, hatch="////", zorder=3)
+    for y_, v, p in zip(yrs, vol, tg["ghg_reduction_pct"], strict=True):
+        a.text(y_, v + 0.08, f"{p:g} %\n{v:.2f}", ha="center", va="bottom", fontsize=fs.FS_TEXT - 1.4, linespacing=1.1,
+               zorder=6)
+    green = fs.CROP_COLORS["sugarcane"]
+    a.axhline(cur["authorised_m3d"] / 1e6, color=green, lw=0.9, zorder=4)
+    a.axhline(cur["produced_m3d"] / 1e6, color="#c1121f", lw=0.9, zorder=4)
+    if len(sn) > 1:
+        a.axhline(sn.iloc[0]["produced_m3d"] / 1e6, color="#c1121f", lw=0.5, ls=(0, (1, 1)), alpha=0.7, zorder=4)
+    a.set_xlim(x0, x1)
+    a.set_ylim(0, max(top, vol.max()) * 1.08)
+    a.set_xticks(yrs)
+    a.set_ylabel("Million m³ per day")
+    axis_style(a)
+    cv.text(1.0, FH - 1.0, "Biomethane mandate: targets, flows and the stock within reach", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="top")
+    rows = [("patch", {"fc": "#1a1a1a", "ec": "#1a1a1a"}, "target, official volume"),
+            ("patch", {"fc": "white", "ec": "#1a1a1a", "hatch": "////"}, "indicative, under consultation"),
+            ("line", (green, 0.9, "-"), f"ANP authorised {cur['authorised_m3d'] / 1e6:.2f} ({cur['snapshot']})"),
+            ("line", ("#c1121f", 0.9, "-"), f"ANP production {cur['produced_m3d'] / 1e6:.2f} ({cur['snapshot']})")]
+    if len(sn) > 1:
+        rows.append(("line", ("#c1121f", 0.5, (0, (1, 1))),
+                     f"production {sn.iloc[0]['produced_m3d'] / 1e6:.2f} ({sn.iloc[0]['snapshot']}, record)"))
+    rows.append(("patch", {"fc": "#dfeee6", "ec": "#9cc9b0"}, "stock: N1 within 30 km of the plants"))
+    cv.legend(96.0, FH - 12.0, [("", rows)], header=None)
+    cv.text(1.0, 0.6, "Volumes as stated: CNPE Res. 4/2026 (2026), MME Ordinance 942/2026 (2027, consultation). "
+            "2028–2030: % × the 2027 base (derived);\nno official target for 2035. Flows: m³ of biomethane per day "
+            "(ANP open data). Stock: theoretical methane (N1), not an available supply.",
+            fontsize=fs.FS_CRED - 0.4, color=fs.MUTED, va="bottom", linespacing=1.3)
+    ctx.ck.add("x08c_mandate", True, f"{len(tg)} targets; production {cur['produced_m3d'] / 1e6:.2f} M m³/d",
+               float(cur["produced_m3d"]))
     return cv
 
 
