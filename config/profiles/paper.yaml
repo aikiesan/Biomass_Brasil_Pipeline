@@ -73,9 +73,8 @@ paper:
     examples: []
     max_chip_px: 900
   # Fig 2: what the invariant checks caught, numbered in this order and marked on the station `at` (a stage,
-  # a pass, a line name: factors / satellite / statistics / plants, or a product: release / postgis / stac /
-  # paper). Numbers marked `from` come from the run's check logs; the others are results of comparisons
-  # outside the stages (source given), kept here as text.
+  # a pass, or a line name: factors / satellite / statistics / plants). Numbers marked `from` come from the
+  # run's check logs; the others are results of comparisons outside the stages (source given), kept as text.
   checks_caught:
     - {text: "IBGE revised 2024 after our export: municipal sums 0.07–0.35 % off the national totals",
        source: "SIDRA API national totals (data/scratch/compare_national.py)", at: statistics}
@@ -91,8 +90,6 @@ paper:
        at: reach}
     - {text: "Coverage rasters of another collection rejected (Col. 10 differs 1–3 %; Col. 11: {value})",
        from: collection_guard, at: border_share}
-    - {text: "PILAR-2b platform loaded from bbp: 0 differences with its own ingest",
-       source: "bbp load --target pilar2b parity test", at: postgis}
   # Table 1. Period and files come from the configuration and the data; these are
   # the facts the pipeline cannot read from the files.
   sources:

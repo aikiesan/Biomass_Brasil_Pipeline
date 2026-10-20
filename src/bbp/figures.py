@@ -882,127 +882,106 @@ def checks_caught(cfg: Config, counts: dict) -> list[str]:
     return [text for text, _ in checks_caught_at(cfg, counts)]
 
 
-# Fig 2 as a transit map: each data family is a line, each stage a station (round: tabular stage; square:
-# 30 m pass, the pixel), an interchange where families meet; publish branches into the products line.
+# Fig 2 as a transit map: each data family is a line with its own stations (round: tabular stage; square:
+# 30 m pass, the pixel); the lines flow into one trunk where the families are compared, ending at publish.
 LINE_COLORS = {"factors": "#8a8a8a", "satellite": "#3f6b8c", "statistics": "#b07a24", "plants": "#7b4a7e",
-               "products": "#b5b5b5"}
+               "trunk": "#333333"}
 LINE_LW = 2.6                       # pt
-LINE_GAP = 2.2                      # mm between parallel lines in a bundle
 
 
 def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    import textwrap
+
     import matplotlib.patheffects as pe
-    from matplotlib.patches import FancyBboxPatch, Rectangle
+    from matplotlib.patches import Circle, FancyBboxPatch, Rectangle
 
     counts = check_counts(cfg)
     stages = [s for s in STAGES if s != "sanitation"]  # sanitation feeds PILAR-2b, not the paper
     passes = [p for p, _, _ in PASSES]
-    W, H = fs.FULL_W, 107.0
+    W, H = fs.FULL_W, 91.0
     cv = fs.canvas(W, H, host)
     ax = cv.ov
     halo = [pe.withStroke(linewidth=1.6, foreground="white")]
-    G = LINE_GAP
+    C = LINE_COLORS
 
-    # ---- geometry (mm): line heights before and inside the bundle, station x ----------------------------------
-    y_fac, y_sat, y_sta, y_pla = 93.0, 81.0, 65.0, 47.0          # lines before they meet
-    b_sta = y_sta                                                # bundle: statistics stays, the others join it
-    b_sat, b_fac, b_pla = b_sta + G, b_sta + 2 * G, b_sta - G
-    x0, x_ing, x_a, x_reach = 26.5, 31.0, 41.5, 54.0
-    x_merge = 46.0                                               # satellite bends down from here
-    xs = {"area": 64.0, "reconcile": 72.0, "scale": 80.0, "inventory": 88.0, "border_share": 96.0,
-          "analyse": 104.0, "demo": 112.0, "publish": 121.0}
-    x_end = xs["publish"]
+    # ---- geometry (mm) -------------------------------------------------------------------------------------------
+    y_fac, y_sat, y_sta, y_pla = 78.0, 68.0, 52.0, 36.0
+    y_t = y_sta                                                   # the trunk continues the statistics line
+    x0, x_ing, x_a, x_reach = 26.5, 31.0, 41.5, 55.0
+    xs = {"area": 61.0, "reconcile": 70.0, "scale": 79.0, "inventory": 88.0, "border_share": 97.0,
+          "analyse": 106.0, "demo": 115.0, "publish": 124.0}
+    bend = 3.0
 
     def path(pts, color, lw=LINE_LW, z=2):
         ax.plot([p[0] for p in pts], [p[1] for p in pts], color=color, lw=lw, solid_capstyle="round",
                 solid_joinstyle="round", zorder=z)
 
-    C = LINE_COLORS
-    d_sat = y_sat - b_sat                                        # 45° bends
-    path([(x0, y_fac), (xs["inventory"] - 3, y_fac), (xs["inventory"], y_fac - 3), (xs["inventory"], b_fac),
-          (x_end, b_fac)], C["factors"])
-    path([(x0, y_sat), (x_merge, y_sat), (x_merge + d_sat, b_sat), (x_end, b_sat)], C["satellite"])
-    path([(x0, y_sta), (x_end, b_sta)], C["statistics"])
-    path([(x0, y_pla), (xs["demo"] - 3, y_pla), (xs["demo"], y_pla + 3), (xs["demo"], b_pla), (x_end, b_pla)],
-         C["plants"])
-    # products: out of publish to the right, down, and back along the bottom
-    y_prod, x_turn = 33.0, W - 2.5
-    prod_x = [40.0, 66.0, 92.0, 118.0]
-    path([(x_end, b_sta), (x_turn - 3, b_sta), (x_turn, b_sta - 3), (x_turn, y_prod + 3), (x_turn - 3, y_prod),
-          (prod_x[0], y_prod)], C["products"], lw=LINE_LW * 0.7, z=1.5)
+    d = y_sat - y_t                                               # the satellite line comes down at 45°
+    path([(x0, y_fac), (xs["inventory"] - bend, y_fac), (xs["inventory"], y_fac - bend), (xs["inventory"], y_t)],
+         C["factors"])
+    path([(x0, y_sat), (xs["area"] - d, y_sat), (xs["area"], y_t)], C["satellite"])
+    path([(x0, y_pla), (xs["demo"] - bend, y_pla), (xs["demo"], y_pla + bend), (xs["demo"], y_t)], C["plants"])
+    path([(x0, y_sta), (xs["area"], y_t)], C["statistics"])
+    path([(xs["area"], y_t), (xs["publish"], y_t)], C["trunk"], lw=LINE_LW * 1.25, z=2.5)
 
     # ---- stations ------------------------------------------------------------------------------------------------
-    R, SQ, PADC = 1.25, 2.5, 1.35
+    R, SQ, PADC = 1.35, 2.7, 1.35
 
-    def stop(x, y):
-        ax.scatter([x], [y], s=(2 * R / 0.3528) ** 2 * 0.62, c="white", edgecolors=fs.INK, linewidths=0.6, zorder=6)
+    def stop(x, y, r=R):
+        ax.add_patch(Circle((x, y), r, fc="white", ec=fs.INK, lw=0.7, zorder=6))
 
-    def pixel(x, y0, y1):                                  # a 30 m pass: square corners, a 2 × 2 pixel grid
-        h = (y1 - y0) + SQ
-        ax.add_patch(Rectangle((x - SQ / 2, y0 - SQ / 2), SQ, h, fc="white", ec=fs.INK, lw=0.6, zorder=6))
-        ax.plot([x, x], [y0 - SQ / 2, y1 + SQ / 2], color="#9a9a9a", lw=0.3, zorder=6.1)
-        for yy in np.arange(y0, y1 + 0.01, G) if y1 > y0 else [y0]:
-            ax.plot([x - SQ / 2, x + SQ / 2], [yy, yy], color="#9a9a9a", lw=0.3, zorder=6.1)
+    def pixel(x, y):                                       # a 30 m pass: a square with a 2 × 2 pixel grid
+        ax.add_patch(Rectangle((x - SQ / 2, y - SQ / 2), SQ, SQ, fc="white", ec=fs.INK, lw=0.7, zorder=6))
+        ax.plot([x, x], [y - SQ / 2, y + SQ / 2], color="#9a9a9a", lw=0.3, zorder=6.1)
+        ax.plot([x - SQ / 2, x + SQ / 2], [y, y], color="#9a9a9a", lw=0.3, zorder=6.1)
 
-    def interchange(x, y0, y1):
-        ax.add_patch(FancyBboxPatch((x - PADC, y0 - PADC), 2 * PADC, (y1 - y0) + 2 * PADC,
-                                    boxstyle=f"round,pad=0,rounding_size={PADC}", fc="white", ec=fs.INK, lw=0.7,
-                                    zorder=6))
-
-    def label(x, y, side, name, ha="center"):
-        """Station name (bold) with its check count, and the two-line description; above or below (x, y)."""
+    def label(x, y, side, name, dx=0.0):
+        """Station name (bold) with its check count, and the two-line description; above or below (x, y),
+        shifted `dx` along the line (off an incoming line)."""
+        x += dx
         sub = STAGE_TEXT.get(name, "")
         title = name.replace("_", " ")
         c = counts.get(name)
-        n_sub = sub.count("\n") + 1 if sub else 0
         line_h = fs.FS_CRED * 0.3528 * 1.18
         if side == "above":
-            y_sub, y_name = y, y + n_sub * line_h + 0.4
+            y_sub, y_name = y, y + (sub.count("\n") + 1) * line_h + 0.4
         else:
             y_name, y_sub = y, y - fs.FS_ITEM * 0.3528 * 1.05 - 0.3
-        ax.text(x, y_name, title, fontsize=fs.FS_ITEM, fontweight="bold", ha=ha,
-                va="bottom" if side == "above" else "top", zorder=8, path_effects=halo)
+        va = "bottom" if side == "above" else "top"
+        ax.text(x, y_name, title, fontsize=fs.FS_ITEM, fontweight="bold", ha="center", va=va, zorder=8,
+                path_effects=halo)
         if sub:
-            ax.text(x, y_sub, sub, fontsize=fs.FS_CRED, color=fs.MUTED, ha=ha, linespacing=1.12,
-                    va="bottom" if side == "above" else "top", zorder=8, path_effects=halo)
+            ax.text(x, y_sub, sub, fontsize=fs.FS_CRED, color=fs.MUTED, ha="center", linespacing=1.12, va=va,
+                    zorder=8, path_effects=halo)
         if c:                                              # the check count: a dark tab right of the name
             w = len(title) * fs.FS_ITEM * 0.3528 * 0.58
-            xr = x + w / 2 if ha == "center" else x + w if ha == "left" else x
             yc = y_name + (1 if side == "above" else -1) * fs.FS_ITEM * 0.3528 * 0.48
-            ax.text(xr + 1.0, yc, f"{c['total']}", fontsize=fs.FS_CRED - 0.4, color="white", fontweight="bold",
-                    ha="left", va="center", zorder=9,
+            ax.text(x + w / 2 + 1.0, yc, f"{c['total']}", fontsize=fs.FS_CRED - 0.4, color="white",
+                    fontweight="bold", ha="left", va="center", zorder=9,
                     bbox={"boxstyle": "round,pad=0.18,rounding_size=0.25", "fc": fs.INK, "ec": "none"})
 
-    above, below = 2.2, -2.2
-    # ingest: every source but the plant registers (read by plants itself)
-    interchange(x_ing, y_sta, y_fac)
+    up, dn = 2.4, -2.4
+    # ingest reads every source but the plant registers (read by plants itself)
+    ax.add_patch(FancyBboxPatch((x_ing - PADC, y_sta - PADC), 2 * PADC, (y_fac - y_sta) + 2 * PADC,
+                                boxstyle=f"round,pad=0,rounding_size={PADC}", fc="white", ec=fs.INK, lw=0.7,
+                                zorder=6))
     label(x_ing, y_fac + PADC + 1.2, "above", "ingest")
-    # before the lines meet
-    pixel(x_a, y_sat, y_sat)
-    label(x_a, y_sat + above, "above", "second_crop")
+    pixel(x_a, y_sat)
+    label(x_a, y_sat + up, "above", "second_crop")
     stop(x_a, y_sta)
-    label(x_a, y_sta + below, "below", "harmonise")
+    label(x_a, y_sta + dn, "below", "harmonise")
     stop(x_a, y_pla)
-    label(x_a, y_pla + below, "below", "plants")
-    pixel(x_reach, y_pla, y_pla)
-    label(x_reach, y_pla + below, "below", "reach")
-    # the bundle
-    interchange(xs["area"], b_sta, b_sat)
-    label(xs["area"], b_sat + above, "above", "area")
-    interchange(xs["reconcile"], b_sta, b_sat)
-    label(xs["reconcile"], b_sta + below, "below", "reconcile")
-    pixel(xs["scale"], b_sta, b_sat)
-    label(xs["scale"], b_sat + above, "above", "scale")
-    interchange(xs["inventory"], b_sta, b_fac)
-    label(xs["inventory"], b_sta + below, "below", "inventory")
-    pixel(xs["border_share"], b_sat, b_sat)
-    label(xs["border_share"], b_fac + above, "above", "border_share")
-    interchange(xs["analyse"], b_sta, b_fac)
-    label(xs["analyse"], b_sta + below, "below", "analyse")
-    pixel(xs["demo"], b_pla, b_fac)
-    label(xs["demo"], b_fac + above, "above", "demo")
-    interchange(xs["publish"], b_pla, b_fac)
-    label(xs["publish"], b_pla + below, "below", "publish")
+    label(x_a, y_pla + dn, "below", "plants")
+    pixel(x_reach, y_pla)
+    label(x_reach, y_pla + dn, "below", "reach")
+    side = {"area": "above", "reconcile": "below", "scale": "above", "inventory": "below",
+            "border_share": "above", "analyse": "below", "demo": "above", "publish": "below"}
+    for k, x in xs.items():
+        if k in passes:
+            pixel(x, y_t)
+        else:
+            stop(x, y_t, R * (1.25 if k == "publish" else 1.0))
+        label(x, y_t + (up if side[k] == "above" else dn), side[k], k, dx=3.5 if k == "area" else 0.0)
 
     # ---- sources: the line names, at the start of each line ------------------------------------------------------
     pam = ", ".join(str(t) for t in sorted(int(k) for k, v in (cfg.raw.get("sidra") or {}).items()
@@ -1012,85 +991,59 @@ def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data, host=None):
                (y_sat, "satellite", "MapBiomas Col. 11", ["coverage 30 m, stats,", "2nd crop (beta),", "irrigation"]),
                (y_sta, "statistics", "IBGE", [f"PAM {pam}", "municipal mesh 2025"]),
                (y_pla, "plants", "Plant registers", ["ANP, CIBiogás, ANEEL,", "MAPA SIF; CONAB, EPE", "(location check)"])]
-    src_xy = {}
     for y, key, head, lines in sources:
         ax.add_patch(Rectangle((x0 - 0.9, y - 1.6), 1.8, 3.2, fc=C[key], ec="none", zorder=5))    # line terminal
-        n = len(lines)
-        top = y + (n * 1.95 + 2.4) / 2
+        top = y + (len(lines) * 1.95 + 2.4) / 2
         ax.text(x0 - 2.0, top, head, fontsize=fs.FS_ITEM, fontweight="bold", ha="right", va="top", color=C[key])
         ax.text(x0 - 2.0, top - 2.4, "\n".join(lines), fontsize=fs.FS_CRED, ha="right", va="top", color=fs.INK,
                 linespacing=1.12)
-        src_xy[key] = (x0, y)
-
-    # ---- products: terminal stations of the grey line ------------------------------------------------------------
-    prod = [("release", "CSV, GeoPackage,\nSHA-256 manifest"), ("PostGIS", "versioned load,\nread by PILAR-2b"),
-            ("STAC", "static catalogue,\none item per release"), ("paper", "numbers.json, tables,\nfigures, captions")]
-    prod_xy = {}
-    for x, (t, sub) in zip(prod_x, prod, strict=True):
-        ax.scatter([x], [y_prod], s=(2 * R / 0.3528) ** 2 * 0.62, c="white", edgecolors="#7a7a7a", linewidths=0.6,
-                   zorder=6)
-        ax.text(x, y_prod - 2.0, t, fontsize=fs.FS_ITEM, fontweight="bold", ha="center", va="top")
-        ax.text(x, y_prod - 4.3, sub, fontsize=fs.FS_CRED, color=fs.MUTED, ha="center", va="top", linespacing=1.12)
-        prod_xy[t.lower()] = (x, y_prod)
 
     # ---- what the checks caught: numbered marks on the station that caught each item ------------------------------
-    at_xy = {"ingest": (x_ing + PADC, y_sta - PADC - 1.0), "second_crop": (x_a + SQ / 2, y_sat + SQ / 2),
-             "harmonise": (x_a + R, y_sta + R), "plants": (x_a + R, y_pla + R), "reach": (x_reach + SQ / 2, y_pla + SQ / 2),
-             "border_share": (xs["border_share"] + SQ / 2, b_sat + SQ / 2), "publish": (xs["publish"] + PADC, b_fac + PADC),
-             **{k: (x + R, y + R) for k, (x, y) in prod_xy.items()},
-             **{k: (x + 0.9, y + 1.6) for k, (x, y) in src_xy.items()}}
-    for k in ("area", "reconcile", "inventory", "analyse"):
-        at_xy[k] = (xs[k] + PADC, (b_fac if k in ("inventory", "analyse") else b_sat) + PADC)
-    at_xy["scale"] = (xs["scale"] + SQ / 2, b_sat + SQ / 2)
-    at_xy["demo"] = (xs["demo"] + SQ / 2, b_fac + SQ / 2)
-    items = checks_caught_at(cfg, counts)
-    used: dict[str, int] = {}
+    corner = {"ingest": (x_ing + PADC, y_sta - PADC - 1.0), "second_crop": (x_a + SQ / 2, y_sat + SQ / 2),
+              "harmonise": (x_a + R, y_sta + R), "plants": (x_a + R, y_pla + R),
+              "reach": (x_reach + SQ / 2, y_pla + SQ / 2),
+              **{k: (x + R, y_t + R) for k, x in xs.items()},
+              "border_share": (xs["border_share"] + SQ / 2, y_t - SQ / 2 - 1.2),   # its label is above
+              **{k: (x0 + 0.9, y + 1.6) for y, k, _, _ in sources}}
+    items = [(t, at) for t, at in checks_caught_at(cfg, counts) if at in corner]
     MR = 1.15
 
     def mark(x, y, i):
-        ax.add_patch(plt_circle((x, y), MR, fc=fs.DETAIL, ec="white", lw=0.5, zorder=10))
+        ax.add_patch(Circle((x, y), MR, fc=fs.DETAIL, ec="white", lw=0.5, zorder=10))
         ax.text(x, y - 0.05, str(i), fontsize=fs.FS_CRED - 0.6, color="white", fontweight="bold", ha="center",
                 va="center", zorder=11)
 
+    used: dict[str, int] = {}
     for i, (_, at) in enumerate(items, 1):
-        if at not in at_xy:
-            ck.add(f"fig02_finding_{i}_placed", False, f"no station '{at}' for finding {i}", severity="warn")
-            continue
         k = used.get(at, 0)
-        x, y = at_xy[at]
+        x, y = corner[at]
         mark(x + 0.4 + k * (2 * MR + 0.3), y + 0.4, i)
         used[at] = k + 1
 
-    # ---- key (top) and findings (bottom) ---------------------------------------------------------------------------
-    ky = H - 1.8
-    kx = 1.0
+    # ---- key (top) and the list of findings (bottom) ---------------------------------------------------------------
+    ky, kx = H - 1.8, 1.0
     ax.plot([kx, kx + 5], [ky, ky], color=fs.INK, lw=LINE_LW * 0.5)
     stop(kx + 2.5, ky)
     ax.text(kx + 6.2, ky, "stage", fontsize=fs.FS_CRED, va="center")
-    kx += 16
-    pixel(kx + 1.3, ky, ky)
+    kx += 15
+    pixel(kx + 1.3, ky)
     ax.text(kx + 3.4, ky, "30 m pass (own command)", fontsize=fs.FS_CRED, va="center")
     kx += 27
-    interchange(kx + 1.3, ky - 0.4, ky + 0.4)
-    ax.text(kx + 3.6, ky, "lines meet", fontsize=fs.FS_CRED, va="center")
-    kx += 16
     ax.text(kx, ky, "41", fontsize=fs.FS_CRED - 0.4, color="white", fontweight="bold", va="center",
             bbox={"boxstyle": "round,pad=0.18,rounding_size=0.25", "fc": fs.INK, "ec": "none"})
-    ax.text(kx + 4.0, ky, "invariant checks", fontsize=fs.FS_CRED, va="center")
-    kx += 23
+    ax.text(kx + 3.2, ky, "invariant checks", fontsize=fs.FS_CRED, va="center")
+    kx += 20
     mark(kx + MR, ky, 1)
     ax.text(kx + 2 * MR + 1.0, ky, "what the checks caught (below)", fontsize=fs.FS_CRED, va="center")
 
     rel = {k: v for k, v in counts.items() if k in stages or k in passes}
     total, failed = sum(v["total"] for v in rel.values()), sum(v["failed"] for v in rel.values())
     warns = sum(v["warnings"] for v in rel.values())
-    fy = 22.0
+    fy = 21.0
     ax.plot([1, W - 1], [fy + 1.6, fy + 1.6], color=fs.INK, lw=0.4)
     ax.text(1.0, fy, "What the checks caught", fontsize=fs.FS_ITEM, fontweight="bold", va="top")
     ax.text(W - 1.0, fy, f"{total} checks in this run · {failed} failed · {warns} warnings", fontsize=fs.FS_CRED,
             va="top", ha="right", color=fs.MUTED)
-    import textwrap
-
     half = (len(items) + 1) // 2
     line_h = fs.FS_CRED * 0.3528 * 1.15
     for col in range(2):
@@ -1104,12 +1057,6 @@ def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data, host=None):
     missing = [s for s in [*stages, *passes] if s not in counts]
     ck.add("fig02_stage_check_counts", not missing, f"no checks file for: {missing}", severity="warn")
     return cv
-
-
-def plt_circle(xy, r, **kw):
-    from matplotlib.patches import Circle
-
-    return Circle(xy, r, **kw)
 
 
 # ---------------------------------------------------------------------------
