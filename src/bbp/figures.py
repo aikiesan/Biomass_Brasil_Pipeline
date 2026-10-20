@@ -842,8 +842,9 @@ def check_counts(cfg: Config) -> dict[str, dict]:
     return out
 
 
-def checks_caught(cfg: Config, counts: dict) -> list[str]:
-    """The items of the 'what the checks caught' box, numbers filled from the check logs."""
+def checks_caught_at(cfg: Config, counts: dict) -> list[tuple[str, str | None]]:
+    """(text, station) of each item the checks caught, numbers filled from the check logs; the station
+    (`at` in paper.checks_caught) is where Fig 2 marks the item."""
     import re
 
     def of(stage):
@@ -872,140 +873,243 @@ def checks_caught(cfg: Config, counts: dict) -> list[str]:
         key = item.get("from")
         if key and key not in values:          # its stage has not run: leave the item out
             continue
-        out.append(item["text"].format(**values.get(key, {})))
+        out.append((item["text"].format(**values.get(key, {})), item.get("at")))
     return out
 
 
-def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data, host=None):
-    import textwrap
+def checks_caught(cfg: Config, counts: dict) -> list[str]:
+    """The items of the 'what the checks caught' list, numbers filled from the check logs."""
+    return [text for text, _ in checks_caught_at(cfg, counts)]
 
-    from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+
+# Fig 2 as a transit map: each data family is a line, each stage a station (round: tabular stage; square:
+# 30 m pass, the pixel), an interchange where families meet; publish branches into the products line.
+LINE_COLORS = {"factors": "#8a8a8a", "satellite": "#3f6b8c", "statistics": "#b07a24", "plants": "#7b4a7e",
+               "products": "#b5b5b5"}
+LINE_LW = 2.6                       # pt
+LINE_GAP = 2.2                      # mm between parallel lines in a bundle
+
+
+def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    import matplotlib.patheffects as pe
+    from matplotlib.patches import FancyBboxPatch, Rectangle
 
     counts = check_counts(cfg)
     stages = [s for s in STAGES if s != "sanitation"]  # sanitation feeds PILAR-2b, not the paper
     passes = [p for p, _, _ in PASSES]
-    W, H = fs.FULL_W, 138.5
+    W, H = fs.FULL_W, 107.0
     cv = fs.canvas(W, H, host)
     ax = cv.ov
+    halo = [pe.withStroke(linewidth=1.6, foreground="white")]
+    G = LINE_GAP
 
-    def box(x, y, w, h, fc="white", ec=fs.MUTED, lw=0.45, r=0.8, ls="-"):
-        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}", fc=fc, ec=ec, lw=lw,
-                                    ls=ls))
+    # ---- geometry (mm): line heights before and inside the bundle, station x ----------------------------------
+    y_fac, y_sat, y_sta, y_pla = 93.0, 81.0, 65.0, 47.0          # lines before they meet
+    b_sta = y_sta                                                # bundle: statistics stays, the others join it
+    b_sat, b_fac, b_pla = b_sta + G, b_sta + 2 * G, b_sta - G
+    x0, x_ing, x_a, x_reach = 26.5, 31.0, 41.5, 54.0
+    x_merge = 46.0                                               # satellite bends down from here
+    xs = {"area": 64.0, "reconcile": 72.0, "scale": 80.0, "inventory": 88.0, "border_share": 96.0,
+          "analyse": 104.0, "demo": 112.0, "publish": 121.0}
+    x_end = xs["publish"]
 
-    def arrow(p0, p1):
-        ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=4.5, lw=0.45, color=fs.INK,
-                                     shrinkA=0, shrinkB=0))
+    def path(pts, color, lw=LINE_LW, z=2):
+        ax.plot([p[0] for p in pts], [p[1] for p in pts], color=color, lw=lw, solid_capstyle="round",
+                solid_joinstyle="round", zorder=z)
 
-    def line(xs, ys):
-        ax.plot(xs, ys, color=fs.INK, lw=0.45, solid_capstyle="butt")
+    C = LINE_COLORS
+    d_sat = y_sat - b_sat                                        # 45° bends
+    path([(x0, y_fac), (xs["inventory"] - 3, y_fac), (xs["inventory"], y_fac - 3), (xs["inventory"], b_fac),
+          (x_end, b_fac)], C["factors"])
+    path([(x0, y_sat), (x_merge, y_sat), (x_merge + d_sat, b_sat), (x_end, b_sat)], C["satellite"])
+    path([(x0, y_sta), (x_end, b_sta)], C["statistics"])
+    path([(x0, y_pla), (xs["demo"] - 3, y_pla), (xs["demo"], y_pla + 3), (xs["demo"], b_pla), (x_end, b_pla)],
+         C["plants"])
+    # products: out of publish to the right, down, and back along the bottom
+    y_prod, x_turn = 33.0, W - 2.5
+    prod_x = [40.0, 66.0, 92.0, 118.0]
+    path([(x_end, b_sta), (x_turn - 3, b_sta), (x_turn, b_sta - 3), (x_turn, y_prod + 3), (x_turn - 3, y_prod),
+          (prod_x[0], y_prod)], C["products"], lw=LINE_LW * 0.7, z=1.5)
 
-    def band(y0, y1, title):
-        box(1, y0, W - 2, y1 - y0, fc="#f4f4f4", ec="none", r=1.0)
-        ax.text(W - 2.5, y1 - 1.4, title.upper(), fontsize=fs.FS_TITLE, fontweight="bold", va="top", ha="right",
-                color=fs.MUTED)
+    # ---- stations ------------------------------------------------------------------------------------------------
+    R, SQ, PADC = 1.25, 2.5, 1.35
 
-    def unit(x, y, w, h, name, dashed=False):
-        box(x, y, w, h, ec=fs.INK, lw=0.55, ls=(0, (2, 1)) if dashed else "-")
-        ax.text(x + w / 2, y + h - 1.6, name.replace("_", " "), ha="center", va="top", fontsize=fs.FS_TITLE + 0.2,
-                fontweight="bold")
-        ax.text(x + w / 2, y + h - 5.0, STAGE_TEXT.get(name, ""), ha="center", va="top", fontsize=fs.FS_CRED,
-                color=fs.MUTED, linespacing=1.15)
+    def stop(x, y):
+        ax.scatter([x], [y], s=(2 * R / 0.3528) ** 2 * 0.62, c="white", edgecolors=fs.INK, linewidths=0.6, zorder=6)
+
+    def pixel(x, y0, y1):                                  # a 30 m pass: square corners, a 2 × 2 pixel grid
+        h = (y1 - y0) + SQ
+        ax.add_patch(Rectangle((x - SQ / 2, y0 - SQ / 2), SQ, h, fc="white", ec=fs.INK, lw=0.6, zorder=6))
+        ax.plot([x, x], [y0 - SQ / 2, y1 + SQ / 2], color="#9a9a9a", lw=0.3, zorder=6.1)
+        for yy in np.arange(y0, y1 + 0.01, G) if y1 > y0 else [y0]:
+            ax.plot([x - SQ / 2, x + SQ / 2], [yy, yy], color="#9a9a9a", lw=0.3, zorder=6.1)
+
+    def interchange(x, y0, y1):
+        ax.add_patch(FancyBboxPatch((x - PADC, y0 - PADC), 2 * PADC, (y1 - y0) + 2 * PADC,
+                                    boxstyle=f"round,pad=0,rounding_size={PADC}", fc="white", ec=fs.INK, lw=0.7,
+                                    zorder=6))
+
+    def label(x, y, side, name, ha="center"):
+        """Station name (bold) with its check count, and the two-line description; above or below (x, y)."""
+        sub = STAGE_TEXT.get(name, "")
+        title = name.replace("_", " ")
         c = counts.get(name)
-        ax.text(x + w / 2, y + 1.2, f"{c['total']} checks" if c else "no checks file", ha="center", va="bottom",
-                fontsize=fs.FS_ITEM, fontweight="bold" if c else "normal")
+        n_sub = sub.count("\n") + 1 if sub else 0
+        line_h = fs.FS_CRED * 0.3528 * 1.18
+        if side == "above":
+            y_sub, y_name = y, y + n_sub * line_h + 0.4
+        else:
+            y_name, y_sub = y, y - fs.FS_ITEM * 0.3528 * 1.05 - 0.3
+        ax.text(x, y_name, title, fontsize=fs.FS_ITEM, fontweight="bold", ha=ha,
+                va="bottom" if side == "above" else "top", zorder=8, path_effects=halo)
+        if sub:
+            ax.text(x, y_sub, sub, fontsize=fs.FS_CRED, color=fs.MUTED, ha=ha, linespacing=1.12,
+                    va="bottom" if side == "above" else "top", zorder=8, path_effects=halo)
+        if c:                                              # the check count: a dark tab right of the name
+            w = len(title) * fs.FS_ITEM * 0.3528 * 0.58
+            xr = x + w / 2 if ha == "center" else x + w if ha == "left" else x
+            yc = y_name + (1 if side == "above" else -1) * fs.FS_ITEM * 0.3528 * 0.48
+            ax.text(xr + 1.0, yc, f"{c['total']}", fontsize=fs.FS_CRED - 0.4, color="white", fontweight="bold",
+                    ha="left", va="center", zorder=9,
+                    bbox={"boxstyle": "round,pad=0.18,rounding_size=0.25", "fc": fs.INK, "ec": "none"})
 
-    # ---- sources ----------------------------------------------------------------------------------------------
-    pam = ", ".join(str(t) for t in sorted({int(c["pam_table"]) for c in cfg.crops.values()}))
+    above, below = 2.2, -2.2
+    # ingest: every source but the plant registers (read by plants itself)
+    interchange(x_ing, y_sta, y_fac)
+    label(x_ing, y_fac + PADC + 1.2, "above", "ingest")
+    # before the lines meet
+    pixel(x_a, y_sat, y_sat)
+    label(x_a, y_sat + above, "above", "second_crop")
+    stop(x_a, y_sta)
+    label(x_a, y_sta + below, "below", "harmonise")
+    stop(x_a, y_pla)
+    label(x_a, y_pla + below, "below", "plants")
+    pixel(x_reach, y_pla, y_pla)
+    label(x_reach, y_pla + below, "below", "reach")
+    # the bundle
+    interchange(xs["area"], b_sta, b_sat)
+    label(xs["area"], b_sat + above, "above", "area")
+    interchange(xs["reconcile"], b_sta, b_sat)
+    label(xs["reconcile"], b_sta + below, "below", "reconcile")
+    pixel(xs["scale"], b_sta, b_sat)
+    label(xs["scale"], b_sat + above, "above", "scale")
+    interchange(xs["inventory"], b_sta, b_fac)
+    label(xs["inventory"], b_sta + below, "below", "inventory")
+    pixel(xs["border_share"], b_sat, b_sat)
+    label(xs["border_share"], b_fac + above, "above", "border_share")
+    interchange(xs["analyse"], b_sta, b_fac)
+    label(xs["analyse"], b_sta + below, "below", "analyse")
+    pixel(xs["demo"], b_pla, b_fac)
+    label(xs["demo"], b_fac + above, "above", "demo")
+    interchange(xs["publish"], b_pla, b_fac)
+    label(xs["publish"], b_pla + below, "below", "publish")
+
+    # ---- sources: the line names, at the start of each line ------------------------------------------------------
+    pam = ", ".join(str(t) for t in sorted(int(k) for k, v in (cfg.raw.get("sidra") or {}).items()
+                                          if str((v or {}).get("survey", "")).upper() == "PAM"))
     fac = cfg.factors.get("source", {}).get("version", "").split(" / ")[-1]
-    groups = [("IBGE", ["Municipal mesh 2025", "PAM (SIDRA", f"  {pam})"]),
-              ("MapBiomas Col. 11", ["Coverage, irrigation stats", "Second crop (beta), 30 m", "Coverage, 30 m"]),
-              ("CP2b", ["Factors g, TS, VS/TS,", "BMP", *textwrap.wrap(fac, 24)[:1]]),
-              ("Plant registers", ["ANP ethanol, biodiesel,", "biomethane (open data)",
-                                   "CIBiogás, ANEEL, MAPA SIF;", "CONAB, EPE (location check)"])]
-    sb0, sb1 = 114.0, 137.5
-    band(sb0, sb1, "Sources")
-    gx, gw, gy, gh = [3.0, 27.0, 57.0, 85.0], [22.0, 28.0, 26.0, 40.0], sb0 + 2.0, 17.0
-    for x, w, (agency, items) in zip(gx, gw, groups, strict=True):
-        box(x, gy, w, gh)
-        ax.text(x + 1.4, gy + gh - 1.4, agency, fontsize=fs.FS_HEAD - 0.6, fontweight="bold", va="top")
-        for i, it in enumerate(items):
-            ax.text(x + 1.4, gy + gh - 5.2 - i * 3.0, it, fontsize=fs.FS_ITEM - 0.2, va="top")
+    sources = [(y_fac, "factors", "CP2b factors", ["g, TS, VS/TS, BMP", fac]),
+               (y_sat, "satellite", "MapBiomas Col. 11", ["coverage 30 m, stats,", "2nd crop (beta),", "irrigation"]),
+               (y_sta, "statistics", "IBGE", [f"PAM {pam}", "municipal mesh 2025"]),
+               (y_pla, "plants", "Plant registers", ["ANP, CIBiogás, ANEEL,", "MAPA SIF; CONAB, EPE", "(location check)"])]
+    src_xy = {}
+    for y, key, head, lines in sources:
+        ax.add_patch(Rectangle((x0 - 0.9, y - 1.6), 1.8, 3.2, fc=C[key], ec="none", zorder=5))    # line terminal
+        n = len(lines)
+        top = y + (n * 1.95 + 2.4) / 2
+        ax.text(x0 - 2.0, top, head, fontsize=fs.FS_ITEM, fontweight="bold", ha="right", va="top", color=C[key])
+        ax.text(x0 - 2.0, top - 2.4, "\n".join(lines), fontsize=fs.FS_CRED, ha="right", va="top", color=fs.INK,
+                linespacing=1.12)
+        src_xy[key] = (x0, y)
 
-    # ---- stages (tabular run) and 30 m passes -----------------------------------------------------------------
-    rb0, rb1 = 64.0, 110.0
-    band(rb0, rb1, "bbp: stages of the run, 30 m passes")
-    n = len(stages)
-    sgap, sx0 = 1.6, 3.0
-    sw = (W - 2 * sx0 - (n - 1) * sgap) / n
-    sy, sh = 88.0, 14.0
-    cx = {st: sx0 + i * (sw + sgap) + sw / 2 for i, st in enumerate(stages)}
-    for i, st in enumerate(stages):
-        x = cx[st] - sw / 2
-        unit(x, sy, sw, sh, st)
-        if i:
-            arrow((x - sgap, sy + sh / 2), (x, sy + sh / 2))
-    # sources → ingest (IBGE, MapBiomas, CP2b) and registers → plants
-    bus_y, bus2 = sb0 - 1.2, sb0 - 2.8
-    for x, w in zip(gx[:3], gw[:3], strict=True):
-        line([x + w / 2, x + w / 2], [gy, bus_y])
-    line([cx["ingest"], gx[2] + gw[2] / 2], [bus_y, bus_y])
-    arrow((cx["ingest"], bus_y), (cx["ingest"], sy + sh))
-    rx = gx[3] + gw[3] / 2
-    line([rx, rx], [gy, bus2])
-    line([cx["plants"], rx], [bus2, bus2])
-    arrow((cx["plants"], bus2), (cx["plants"], sy + sh))
-    # passes, each under the stage it feeds or reads
-    py, ph = 67.0, 14.0
-    pcx = {p: cx[st] for p, st, _ in PASSES}
-    for p, _, way in PASSES:
-        unit(pcx[p] - sw / 2, py, sw, ph, p, dashed=True)
-        if way == "up":
-            arrow((pcx[p], py + ph), (pcx[p], sy))
-        elif way == "down":
-            arrow((pcx[p], sy), (pcx[p], py + ph))
-    for a_, b_ in (("reach", "scale"), ("scale", "demo")):
-        arrow((pcx[a_] + sw / 2, py + ph / 2), (pcx[b_] - sw / 2, py + ph / 2))
-    mid = (cx["area"] + cx["reconcile"]) / 2
-    ax.text(mid, py + ph - 0.6, "30 m passes, own commands;\ntables released by publish", ha="center", va="top",
-            fontsize=fs.FS_CRED, color=fs.MUTED, style="italic", linespacing=1.15)
+    # ---- products: terminal stations of the grey line ------------------------------------------------------------
+    prod = [("release", "CSV, GeoPackage,\nSHA-256 manifest"), ("PostGIS", "versioned load,\nread by PILAR-2b"),
+            ("STAC", "static catalogue,\none item per release"), ("paper", "numbers.json, tables,\nfigures, captions")]
+    prod_xy = {}
+    for x, (t, sub) in zip(prod_x, prod, strict=True):
+        ax.scatter([x], [y_prod], s=(2 * R / 0.3528) ** 2 * 0.62, c="white", edgecolors="#7a7a7a", linewidths=0.6,
+                   zorder=6)
+        ax.text(x, y_prod - 2.0, t, fontsize=fs.FS_ITEM, fontweight="bold", ha="center", va="top")
+        ax.text(x, y_prod - 4.3, sub, fontsize=fs.FS_CRED, color=fs.MUTED, ha="center", va="top", linespacing=1.12)
+        prod_xy[t.lower()] = (x, y_prod)
 
-    # ---- products -----------------------------------------------------------------------------------------------
-    band(38, 60, "Products")
-    prod = [("Release", "CSV, GeoPackage, manifest\nwith SHA-256 of every input"),
-            ("PostGIS", "versioned load,\nviews read by PILAR-2b"),
-            ("STAC catalogue", "one item per release\nfile, size and checksum"),
-            ("Paper", "numbers.json, tables,\nfigures, captions")]
-    pw, pgap, qy, qh = 28.5, 2.0, 40.5, 12.0
-    pub_cx = cx["publish"]
-    pbus = 62.0
-    line([pub_cx, pub_cx], [sy, pbus])
-    xs = [3 + i * (pw + pgap) for i in range(len(prod))]
-    line([xs[0] + pw / 2, pub_cx], [pbus, pbus])
-    for x, (t, sub) in zip(xs, prod, strict=True):
-        arrow((x + pw / 2, pbus), (x + pw / 2, qy + qh))
-        box(x, qy, pw, qh)
-        ax.text(x + 1.5, qy + qh - 1.5, t, fontsize=fs.FS_TITLE + 0.2, fontweight="bold", va="top")
-        ax.text(x + 1.5, qy + 1.2, sub, fontsize=fs.FS_CRED + 0.3, va="bottom", color=fs.MUTED, linespacing=1.2)
+    # ---- what the checks caught: numbered marks on the station that caught each item ------------------------------
+    at_xy = {"ingest": (x_ing + PADC, y_sta - PADC - 1.0), "second_crop": (x_a + SQ / 2, y_sat + SQ / 2),
+             "harmonise": (x_a + R, y_sta + R), "plants": (x_a + R, y_pla + R), "reach": (x_reach + SQ / 2, y_pla + SQ / 2),
+             "border_share": (xs["border_share"] + SQ / 2, b_sat + SQ / 2), "publish": (xs["publish"] + PADC, b_fac + PADC),
+             **{k: (x + R, y + R) for k, (x, y) in prod_xy.items()},
+             **{k: (x + 0.9, y + 1.6) for k, (x, y) in src_xy.items()}}
+    for k in ("area", "reconcile", "inventory", "analyse"):
+        at_xy[k] = (xs[k] + PADC, (b_fac if k in ("inventory", "analyse") else b_sat) + PADC)
+    at_xy["scale"] = (xs["scale"] + SQ / 2, b_sat + SQ / 2)
+    at_xy["demo"] = (xs["demo"] + SQ / 2, b_fac + SQ / 2)
+    items = checks_caught_at(cfg, counts)
+    used: dict[str, int] = {}
+    MR = 1.15
 
-    # ---- what the checks caught -------------------------------------------------------------------------------
+    def mark(x, y, i):
+        ax.add_patch(plt_circle((x, y), MR, fc=fs.DETAIL, ec="white", lw=0.5, zorder=10))
+        ax.text(x, y - 0.05, str(i), fontsize=fs.FS_CRED - 0.6, color="white", fontweight="bold", ha="center",
+                va="center", zorder=11)
+
+    for i, (_, at) in enumerate(items, 1):
+        if at not in at_xy:
+            ck.add(f"fig02_finding_{i}_placed", False, f"no station '{at}' for finding {i}", severity="warn")
+            continue
+        k = used.get(at, 0)
+        x, y = at_xy[at]
+        mark(x + 0.4 + k * (2 * MR + 0.3), y + 0.4, i)
+        used[at] = k + 1
+
+    # ---- key (top) and findings (bottom) ---------------------------------------------------------------------------
+    ky = H - 1.8
+    kx = 1.0
+    ax.plot([kx, kx + 5], [ky, ky], color=fs.INK, lw=LINE_LW * 0.5)
+    stop(kx + 2.5, ky)
+    ax.text(kx + 6.2, ky, "stage", fontsize=fs.FS_CRED, va="center")
+    kx += 16
+    pixel(kx + 1.3, ky, ky)
+    ax.text(kx + 3.4, ky, "30 m pass (own command)", fontsize=fs.FS_CRED, va="center")
+    kx += 27
+    interchange(kx + 1.3, ky - 0.4, ky + 0.4)
+    ax.text(kx + 3.6, ky, "lines meet", fontsize=fs.FS_CRED, va="center")
+    kx += 16
+    ax.text(kx, ky, "41", fontsize=fs.FS_CRED - 0.4, color="white", fontweight="bold", va="center",
+            bbox={"boxstyle": "round,pad=0.18,rounding_size=0.25", "fc": fs.INK, "ec": "none"})
+    ax.text(kx + 4.0, ky, "invariant checks", fontsize=fs.FS_CRED, va="center")
+    kx += 23
+    mark(kx + MR, ky, 1)
+    ax.text(kx + 2 * MR + 1.0, ky, "what the checks caught (below)", fontsize=fs.FS_CRED, va="center")
+
     rel = {k: v for k, v in counts.items() if k in stages or k in passes}
     total, failed = sum(v["total"] for v in rel.values()), sum(v["failed"] for v in rel.values())
     warns = sum(v["warnings"] for v in rel.values())
-    items = checks_caught(cfg, counts)
-    box(1, 1, W - 2, 34, ec=fs.INK, lw=0.55, r=1.0)
-    ax.text(2.5, 33.4, "WHAT THE CHECKS CAUGHT", fontsize=fs.FS_HEAD, fontweight="bold", va="top")
-    ax.text(W - 2.5, 33.4, f"{total} checks in this run · {failed} failed · {warns} warnings", fontsize=fs.FS_ITEM,
+    fy = 22.0
+    ax.plot([1, W - 1], [fy + 1.6, fy + 1.6], color=fs.INK, lw=0.4)
+    ax.text(1.0, fy, "What the checks caught", fontsize=fs.FS_ITEM, fontweight="bold", va="top")
+    ax.text(W - 1.0, fy, f"{total} checks in this run · {failed} failed · {warns} warnings", fontsize=fs.FS_CRED,
             va="top", ha="right", color=fs.MUTED)
+    import textwrap
+
     half = (len(items) + 1) // 2
-    pitch = min(6.0, 27.0 / max(half, 1))
-    for i, it in enumerate(items):
-        col, row = divmod(i, half)
-        ax.text(3 + col * 64, 28.6 - row * pitch, "–", fontsize=fs.FS_ITEM, va="top")
-        ax.text(5.5 + col * 64, 28.6 - row * pitch, textwrap.fill(it, 60), fontsize=fs.FS_ITEM, va="top",
-                linespacing=1.15)
+    line_h = fs.FS_CRED * 0.3528 * 1.15
+    for col in range(2):
+        y = fy - 3.9
+        for i in range(col * half, min(len(items), (col + 1) * half)):
+            lines = textwrap.wrap(items[i][0], 80)
+            x = 1.0 + col * 66.0
+            mark(x + MR, y - line_h / 2, i + 1)
+            ax.text(x + 2 * MR + 0.9, y, "\n".join(lines), fontsize=fs.FS_CRED, va="top", linespacing=1.15)
+            y -= len(lines) * line_h + 0.9
     missing = [s for s in [*stages, *passes] if s not in counts]
     ck.add("fig02_stage_check_counts", not missing, f"no checks file for: {missing}", severity="warn")
     return cv
+
+
+def plt_circle(xy, r, **kw):
+    from matplotlib.patches import Circle
+
+    return Circle(xy, r, **kw)
 
 
 # ---------------------------------------------------------------------------

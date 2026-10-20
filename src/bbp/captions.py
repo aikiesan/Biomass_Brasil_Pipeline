@@ -85,10 +85,13 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
         # ---- paper ---------------------------------------------------------------------------------------------
         "study_area": _fig01(cfg, facts.get("fig01")),
         "workflow":
-            "The open workflow (bbp): sources, the stages of the run and the 30 m passes (dashed: commands of "
-            "their own, tables released by publish), each with the number of invariant checks it runs, the "
-            "products, and what the checks caught in the source data. Every number in the text comes from "
-            "numbers.json and the check logs written by the same run.",
+            "The open workflow (bbp) drawn as a transit map. Each data family is a line (CP2b factors, MapBiomas "
+            "satellite data, IBGE statistics, plant registers); each stage is a station (round: tabular stage; "
+            "square: 30 m pass, a command of its own whose tables publish releases), with the number of invariant "
+            "checks it runs. The lines meet where the families are compared (observed vs declared area, H1–H3) and "
+            "in the demonstration; publish branches into the products. Red numbers: what the checks caught in the "
+            "source data, marked where it was caught. Every number in the text comes from numbers.json and the "
+            "check logs written by the same run.",
         "agreement_scale":
             f"Agreement between observed and declared area from municipality to state (H1): share of the units "
             f"where the two sources are within ±25 % of each other, weighted by declared area (left) and by "
