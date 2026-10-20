@@ -196,22 +196,38 @@ def _plot_classes(ax, gdf, classes: pd.Series, colors: list, edge: float = 0.0, 
             merged.plot(ax=ax, facecolor=fc, edgecolor=fs.MUTED, hatch=hatch, linewidth=0, rasterized=True, zorder=1)
 
 
-RATIO_LEGEND_H = 4 * fs.ROW + 0.5      # height of _ratio_legend (mm)
+RATIO_LEGEND_H = 11.5                  # height of _ratio_legend (mm)
+RATIO_LEGEND_W = 100.0                 # its width; the space to the right is free (north arrow, scale bar)
 
 
 def _ratio_legend(cv: Canvas, x: float, y_top: float, years: list[int], min_area: float):
-    """The observed/declared legend in one band of four columns, read as what the satellite sees against the
-    statistics: more, agree, less, and what cannot be compared."""
-    _, colors, labels = ratio_classes()
-    patch = {lab: ("patch", c, lab) for c, lab in zip(colors, labels, strict=True)}
-    cols = [("Satellite sees more", [patch["> +100 %"], patch["+25 to +100 %"]]),
-            ("Sources agree", [patch["within ±25 %"]]),
-            ("Satellite sees less", [patch["−50 to −25 %"], patch["< −50 %"]]),
-            ("Not comparable", [("patch", {"fc": fc, "hatch": h, "ec": fs.MUTED}, ONE_SOURCE_LABELS[k])
-                                for k, (fc, h) in ONE_SOURCE.items()]
-             + [("patch", {"fc": "white", "ec": fs.HAIR}, f"neither ≥ {min_area:g} ha")])]
-    for i, (title, rows) in enumerate(cols):
-        cv.legend(x + (0.0, 29.0, 55.0, 85.0)[i], y_top, [(title, rows)], header=None)
+    """The observed/declared legend as one diverging bar read left to right (the satellite sees less, the
+    sources agree, the satellite sees more) with the class limits under it, then what cannot be compared."""
+    from matplotlib.patches import Rectangle
+
+    _, colors, _ = ratio_classes()
+    ov = cv.ov
+    bw, bh = 12.0, 2.6                                  # one class
+    y_title = y_top
+    y_side = y_top - 3.3                                # the reading of the bar, above it
+    y_bar = y_side - 1.4 - bh
+    ov.text(x, y_title, f"Observed / declared area, median {years[0]}–{years[-1]}", fontsize=fs.FS_TITLE,
+            va="top", ha="left", color=fs.INK)
+    for i, c in enumerate(colors):
+        ov.add_patch(Rectangle((x + i * bw, y_bar), bw, bh, fc=c, ec="white", lw=0.5))
+    ov.add_patch(Rectangle((x, y_bar), len(colors) * bw, bh, fc="none", ec="#7a7a7a", lw=0.4))
+    for i, t in enumerate(["−50 %", "−25 %", "+25 %", "+100 %"], 1):
+        ov.plot([x + i * bw] * 2, [y_bar - 0.5, y_bar], color=fs.INK, lw=0.4)
+        ov.text(x + i * bw, y_bar - 0.7, t, fontsize=fs.FS_CRED, ha="center", va="top", color=fs.INK)
+    mid = x + 2.5 * bw
+    ov.text(x, y_side, "← satellite sees less", fontsize=fs.FS_CRED, ha="left", va="center", color=fs.INK)
+    ov.text(mid, y_side, "agree", fontsize=fs.FS_CRED, ha="center", va="center", color=fs.INK, fontweight="bold")
+    ov.text(x + 5 * bw, y_side, "satellite sees more →", fontsize=fs.FS_CRED, ha="right", va="center",
+            color=fs.INK)
+    cv.legend(x + 5 * bw + 6.0, y_top, [("Not comparable", [
+        ("patch", {"fc": fc, "hatch": h, "ec": fs.MUTED}, f"{ONE_SOURCE_LABELS[k]}")
+        for k, (fc, h) in ONE_SOURCE.items()] + [("patch", {"fc": "white", "ec": fs.HAIR},
+                                                  f"neither source ≥ {min_area:g} ha")])], header=None)
 
 
 def _factor_axis(ax, axis: str = "x", lo: float = 0.0, hi: float = 3.0, title: str = ""):
@@ -1218,16 +1234,10 @@ def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data, host=None, crop
                     color=fs.MUTED, va="bottom", linespacing=1.1)
         ck.add(f"fig05_{c}_has_municipalities", len(lr) > 0, f"{len(lr)} municipalities scored", len(lr),
                severity="warn")
-    # north arrow and scale bar: in the empty cell if there is one, else in the south-east corner (Atlantic)
-    # of the last map of the first row
-    if len(crops) % ncol:
-        r, col = divmod(len(crops), ncol)
-        xr, yr = 1.0 + col * (MW + gap), LB + (nrow - 1 - r) * row_h + MH / 2
-    else:
-        xr, yr = 1.0 + (min(ncol, len(crops)) - 1) * (MW + gap), LB + (nrow - 1) * row_h
-    cv.north(xr + MW - 4.0, yr + 7.5, h=3.2)
-    cv.scale(xr + MW - 19.0, yr + 1.6, S, seg_km=1000, n=1, compact=True)
+    # the legend band under the maps: legend on the left, north arrow and scale bar on the right
     _ratio_legend(cv, 1.0, LB - 1.0, years, min_area)
+    cv.north(FW - 4.0, LB - 9.0, h=4.0)
+    cv.scale(FW - 24.0, LB - 9.2, S, seg_km=1000, n=1, compact=True)
     cv.text(FW - 1.0, 0.6, f"SIRGAS 2000 / Brazil Polyconic. {DATA_CREDIT}. {fs.CREDIT_CARTO}", fontsize=fs.FS_CRED,
             color=fs.MUTED, ha="right", va="bottom")
     ck.add("fig05_scale", True, f"{S:,.0f} m per mm", S)
@@ -1662,7 +1672,7 @@ def figS1_state_detail(cfg: Config, ck: CheckLog, data: _Data, host=None):
         return None
     edges, colors, _ = ratio_classes()
     S, MW, MH = _crop_maps_layout(ext)
-    det_w_max, det_h, row_gap, LB = fs.FULL_W - MW - 14.0, 44.0, 7.0, 21.0
+    det_w_max, det_h, row_gap, LB = fs.FULL_W - MW - 14.0, 44.0, 7.0, RATIO_LEGEND_H + 3.0
     rows = []
     for ins in insets:
         x0, y0, x1, y1 = states[states["uf"] == ins["uf"]].total_bounds
@@ -1700,7 +1710,7 @@ def figS1_state_detail(cfg: Config, ck: CheckLog, data: _Data, host=None):
         cv.text(1.0, y + h + 0.8, f"({'abc'[k]}) {ins['uf']} — {fs.label(ins['crop'])}", fontsize=fs.FS_TITLE + 0.4,
                 fontweight="bold", va="bottom")
         cv.scale(dx + dw + 2.0, dy + 1.5, sd, seg_km=100 if sd < 20000 else 200, n=1, bh=0.8)
-    _ratio_legend(cv, 1.0, LB + fs.STRIP - 0.5, years, min_area)
+    _ratio_legend(cv, 1.0, LB + fs.STRIP - 2.0, years, min_area)
     cv.strip(1.0, S, DATA_CREDIT, seg_km=1000)
     return cv
 
