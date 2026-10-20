@@ -174,8 +174,8 @@ def test_figures_are_written_without_h2_tables_or_rasters(run, tmp_path):
     ck = CheckLog("figures")
     written = figures.build(cfg, ck)
     assert not ck.failures, [(c.name, c.detail) for c in ck.failures]
-    # H2 tables (Fig 5), coverage raster (S2) and the plants/reach/demo tables (Figs 7–9, S8–S12) absent
-    skipped = {5, 7, 8, 9, "S2", "S8", "S9", "S10", "S11", "S12"}
+    # H2 tables (Fig 5), coverage raster (S2) and the plants/reach/demo tables (Figs 7–9, S8–S12, S16) absent
+    skipped = {5, 7, 8, 9, "S2", "S8", "S9", "S10", "S11", "S12", "S16"}
     expected = [figures.file_name(k) + ".png" for k in [*figures.FIGURES, *figures.SUPPLEMENT] if k not in skipped]
     assert sorted(p.name for p in written) == sorted(expected)
     assert any(c.name == "fig5_built" and not c.passed and c.severity == "warn" for c in ck.checks)

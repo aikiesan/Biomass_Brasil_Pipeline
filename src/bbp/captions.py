@@ -122,11 +122,14 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             "over the literature ranges of all conversion factors jointly (min to max). Right: the two as a "
             "ratio, area source ÷ factors (Table 4); red where the area source moves N₁ more.",
         "distance_to_plants":
-            f"Crop within reach of existing plants, MapBiomas Collection 11 {year}, 30 m pixels (second-season "
-            "corn: second-crop layer). (a) Cumulative share of each crop's area by great-circle distance to the "
-            "nearest operating plant that uses it; (b) the share within 10–100 km. (c–h) The plants by family "
-            "and register, over the crops they draw on; marker area proportional to capacity; open markers: "
-            "construction, expansion or inactive. Straight-line distance: road distances are longer.",
+            f"Crops within reach of existing plants, MapBiomas Collection 11 {year}, 30 m pixels (second-season "
+            "corn: second-crop layer). Top: share of each crop's area by straight-line (great-circle) distance to "
+            "the nearest operating plant that uses it, with the share within 30 km, the median distance and the "
+            "crop area. Bottom: the share within 30 km per municipality, one map per crop–plant pair; dots: "
+            "operating plants. Road distances are longer. The plants by register: Fig S16.",
+        "plants_by_register":
+            f"The plants by family and register, over the crops they draw on (MapBiomas Collection 11 {year}); "
+            "marker area proportional to capacity; open markers: construction, expansion or inactive.",
         "maup_access":
             f"The same question read at three supports (MAUP): share of each crop's area within a radius of a "
             f"plant, measured from the 30 m pixels and from the land of the municipality and of the intermediate "

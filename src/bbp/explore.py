@@ -1107,3 +1107,119 @@ def build(cfg: Config, ck: CheckLog, only: list[str] | None = None) -> list:
         ck.add(f"{key}_size", cv.fw <= 132.5 and cv.fh <= fs.MAX_H, f"{cv.fw:.1f} × {cv.fh:.1f} mm", severity="warn")
         written += cv.save(folder, name, formats, dpi, panels_dir=folder / "panels" / name)
     return written
+
+
+# ---------------------------------------------------------------------------
+# Fig 7 — crops within reach of existing plants: the five pairs as curves, then where, as maps
+# ---------------------------------------------------------------------------
+REACH_PAIRS = ["sugarcane|sugarcane_mill", "corn_2nd|corn_ethanol", "soybean|biodiesel", "all_crops|biogas",
+               "all_crops|biomethane"]
+REACH_TITLE = {"sugarcane|sugarcane_mill": "Cane → mill", "corn_2nd|corn_ethanol": "2nd corn → corn ethanol",
+               "soybean|biodiesel": "Soybean → biodiesel", "all_crops|biogas": "Crops → biogas",
+               "all_crops|biomethane": "Crops → biomethane"}
+REACH_RADIUS = 30.0
+REACH_MIN_HA = 500.0                    # municipalities with less of the crop: light grey
+
+
+def reach_result(ctx: Ctx, host=None):
+    """Fig 7. Top: share of each crop's area by straight-line distance to the nearest operating plant that uses
+    it (0–150 km), each curve labelled with its share at 30 km and its median distance. Bottom: the same share at
+    30 km per municipality, one map per pair, with the plants as dots."""
+    from matplotlib import colormaps
+
+    from bbp.figures import nice_scale
+
+    dist, units = ctx.t("distance"), ctx.t("units")
+    if dist is None or units is None:
+        return None
+    pairs = [p for p in REACH_PAIRS if p in set(dist["pair"])]
+    FW = fs.FULL_W
+    gap = 1.2
+    w = (FW - 2.0 - (len(pairs) - 1) * gap) / len(pairs)
+    ext = ctx.ext
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    LEG, TT, CH = 12.5, 7.0, 46.0                 # legend band, map titles, chart height
+    FH = LEG + MH + TT + 4.0 + CH + 7.0
+    cv = fs.canvas(FW, FH, host)
+
+    # ---- the curves -------------------------------------------------------------------------------------------
+    ya = LEG + MH + TT + 4.0 + 9.0
+    a = cv.ax(15.0, ya, 73.0, CH - 9.0)
+    stats = {}
+    for pair in pairs:
+        t = dist[dist["pair"] == pair].sort_values("bin_km")
+        cdf = (t["area_ha"].cumsum() / t["area_ha"].sum()).to_numpy()
+        x = t["bin_km"].to_numpy() + 1.0                       # upper edge of each 1 km band
+        at = float(np.interp(REACH_RADIUS, x, cdf))
+        med = float(np.interp(0.5, cdf, x))
+        stats[pair] = (at, med, float(t["area_ha"].sum()))
+        a.plot(x, cdf, color=PAIR_COLOR[pair], lw=1.2 if pair != "all_crops|biomethane" else 1.0,
+               ls=PAIR_LS.get(pair, "-"), zorder=3)
+        a.plot([REACH_RADIUS], [at], "o", ms=3.0, color=PAIR_COLOR[pair], mec=fs.INK, mew=0.3, zorder=4)
+    a.axvline(REACH_RADIUS, color=fs.MUTED, lw=0.6, ls=(0, (2, 1.5)), zorder=1)
+    a.text(REACH_RADIUS + 1.5, 0.6, f"{REACH_RADIUS:.0f} km", fontsize=fs.FS_CRED, color=fs.MUTED, va="center")
+    a.set_xlim(0, 150)
+    a.set_ylim(0, 1.0)
+    a.set_xticks([0, 30, 50, 100, 150])
+    a.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    a.set_xlabel("Straight-line distance to the nearest operating plant that uses the crop (km)")
+    a.set_ylabel("Share of the crop area\nwithin the distance")
+    axis_style(a)
+    a.grid(color=fs.FAINT, lw=0.4)
+    # labels right of the chart: pair, share at 30 km, median distance; ordered as the curves at 150 km
+    order = sorted(pairs, key=lambda p: -stats[p][0])
+    xl, top = 92.0, ya + CH - 9.0
+    cv.text(xl, top + 1.2, f"within {REACH_RADIUS:.0f} km · median", fontsize=fs.FS_CRED, color=fs.MUTED,
+            va="bottom")
+    step = (CH - 11.0) / len(order)
+    for k, pair in enumerate(order):
+        at, med, tot = stats[pair]
+        yy = top - (k + 0.5) * step
+        cv.ov.plot([xl, xl + 4.0], [yy + 1.0] * 2, color=PAIR_COLOR[pair], ls=PAIR_LS.get(pair, "-"), lw=1.2)
+        cv.text(xl + 5.0, yy + 1.0, REACH_TITLE[pair], fontsize=fs.FS_ITEM, fontweight="bold", va="center")
+        cv.text(xl + 5.0, yy - 1.5, f"{100 * at:.1f} % · {med:.0f} km   ({tot / 1e6:.2f} Mha)", fontsize=fs.FS_CRED,
+                va="center")
+        ctx.ck.add(f"fig7_{pair}_{REACH_RADIUS:.0f}km", True, f"{at:.1%} within {REACH_RADIUS:.0f} km, median "
+                   f"{med:.0f} km, {tot / 1e6:.2f} Mha", at)
+    cv.text(1.0, FH - 0.8, "How much of each crop is within reach of an existing plant", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="top")
+
+    # ---- the maps: share at 30 km per municipality ---------------------------------------------------------------
+    cmap = colormaps["YlGnBu"]
+    colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
+    mun = units[(units["level"] == "municipality") & (units["radius_km"] == REACH_RADIUS)]
+    g = ctx.g[["geocode", "geometry"]]
+    y = LEG
+    cv.text(1.0, y + MH + TT - 0.3, f"Where: share of each municipality's crop area within {REACH_RADIUS:.0f} km",
+            fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+    for i, pair in enumerate(pairs):
+        x = 1.0 + i * (w + gap)
+        a = cv.map_ax(x, y, ext, S)
+        t = mun[mun["pair"] == pair].assign(geocode=lambda d: d["unit"].astype("int64")).set_index("geocode")
+        m = g.assign(share=g["geocode"].map(t["share"]), area=g["geocode"].map(t["crop_area_ha"]).fillna(0))
+        little = m["area"] < REACH_MIN_HA
+        m[little].plot(ax=a, color="#f1f1f1", linewidth=0, zorder=1, rasterized=True)
+        cls = np.digitize(m.loc[~little, "share"].fillna(0), SHARE_EDGES[1:-1])
+        m.loc[~little].plot(ax=a, color=[colors[k] for k in cls], linewidth=0, zorder=1.2, rasterized=True)
+        ctx.states.boundary.plot(ax=a, color="#6a6a6a", linewidth=0.2, zorder=3)
+        ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.4, zorder=3.2)
+        if ctx.plants is not None:
+            P = ctx.plants[(ctx.plants["family"] == pair.split("|")[1])
+                           & ctx.plants["operating"].fillna(True).astype(bool)]
+            a.scatter(P["x"], P["y"], s=0.5, c="white", edgecolors=PLANT_INK, linewidths=0.2, zorder=5)
+        map_frame(a, ext)
+        cv.text(x + 0.3, y + MH + 0.4, REACH_TITLE[pair], fontsize=fs.FS_ITEM, fontweight="bold", va="bottom")
+        cv.text(x + MW - 0.3, y + 0.4, f"{100 * stats[pair][0]:.1f} %", fontsize=fs.FS_ITEM, ha="right",
+                va="bottom")
+    rows = [("patch", {"fc": c, "ec": "#7a7a7a"}, lab) for c, lab in zip(colors, SHARE_LABELS, strict=True)]
+    cv.legend(1.0, LEG - 0.8, [("", rows[:3])], header=None)
+    cv.legend(23.0, LEG - 0.8, [("", rows[3:])], header=None)
+    cv.legend(45.0, LEG - 0.8, [("", [("patch", {"fc": "#f1f1f1", "ec": "#7a7a7a"},
+                                       f"< {REACH_MIN_HA:.0f} ha of the crop"),
+                                      ("dot", (1.8, "white", PLANT_INK, 0.3), "operating plant")])], header=None)
+    cv.north(FW - 4.0, LEG - 7.5, h=3.5)
+    cv.scale(FW - 25.0, LEG - 7.7, S, seg_km=1000, n=1, compact=True)
+    cv.text(FW - 1.0, 0.4, f"MapBiomas Col. 11 {ctx.year}, 30 m; plants: ANP, CIBiogás. EPSG:5880. "
+            + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, ha="right", va="bottom")
+    return cv

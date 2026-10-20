@@ -2097,14 +2097,10 @@ def fig_h2(cfg: Config, ck: CheckLog, data: _Data, host=None):
 
 
 def fig_reach(cfg: Config, ck: CheckLog, data: _Data, host=None):
-    """Fig 7: crop area by distance to the plants (x04) over the plants by family (x01)."""
+    """Fig 7: crop area by distance to the plants (curves) and its share at 30 km per municipality (maps)."""
     from bbp import explore
 
-    ctx = data.explore()
-    st = fs.Stack(gap=2.0, ck=ck)
-    st.add("ab", lambda h: explore.x04_distance(ctx, host=h))
-    st.add("cdefgh", lambda h: explore.x01_plants(ctx, host=h, start=2))
-    return st.draw()
+    return explore.reach_result(data.explore(), host=host)
 
 
 def fig_typology_mandate(cfg: Config, ck: CheckLog, data: _Data, host=None):
@@ -2131,7 +2127,8 @@ SUPPLEMENT = {"S1": ("national_area", fig03_national_area), "S2": ("example_muni
               "S11": ("region_typology", _explore("x07_typology")),
               "S12": ("registers_biomethane", _explore("x08_registers")),
               "S13": ("n1_by_level", figS_n1_levels), "S14": ("n1_hot_spots", figS_hot_spots),
-              "S15": ("log_ratio_maps_all_crops", figS_log_ratio_maps_all)}
+              "S15": ("log_ratio_maps_all_crops", figS_log_ratio_maps_all),
+              "S16": ("plants_by_register", _explore("x01_plants"))}
 
 
 def file_name(key) -> str:
