@@ -255,7 +255,35 @@ measured at three resolutions, for every pair and for radii of 10–2000 km plus
   the headline gaps at 30 km; and the exploratory x05 (representative points, 480 m cells, April register)
   against the new values.
 
-## 10. Municipal sanitation (platform feed, not part of the paper)
+## 10. Using the system: typology and mandate ruler
+
+`bbp demo` (`demo` in `pipeline.yaml`).
+
+* **Typology.** Each intermediate region is described by the composition of its observed crop area in 2024
+  (MapBiomas Col. 11 statistics and the second-crop layer): soybean, second-season corn, sugarcane, coffee,
+  citrus, cotton (both seasons), rice and other crops (classes 41, 48, 35). Second-season corn is a season of its
+  own, so the parts are shares of the area cropped over the two seasons. Regions with less than 10 kha of crops
+  are left out ("minor agriculture"). Parts below 0.1 % of a region's crop area are rounded zeros, replaced
+  multiplicatively by δ = 0.65 × 0.1 %; the compositions are transformed by the centred log-ratio (CLR), so
+  Euclidean distance is the Aitchison distance. Ward's clustering on the CLR coordinates; the number of types is
+  the most stable partition (largest adjusted Rand index between Ward and k-means, fixed seed) among k = 2–12
+  whose smallest type holds at least 10 regions, ties within 0.02 going to the larger mean silhouette (the
+  silhouette alone keeps growing with k on these data). Each region is crossed with the share of its crops within
+  reach of each family (`reach_units`), its plants and its N1 (observed variant, ref factors). Priority regions:
+  N1 in the top quartile and less than 25 % of all crops within 30 km of a biogas plant.
+* **Mandate ruler.** Targets and volumes as stated by the acts (`demo.mandate.targets`, each with its act, URL
+  and access date): 0.5 % in 2026 = 504.8 thousand m³/d (CNPE Res. 4/2026, art. 3) and 1 % in 2027 =
+  995.2 thousand m³/d (MME Ordinance 942/2026, public consultation). The MME's indicative 3, 4 and 5 % for
+  2028–2030 have no official volume and get one from the 2027 base (volume / %), flagged `derived`. No official
+  target exists for 2035. Flows: ANP authorised capacity and production at the snapshot (§7). Stock: the N1 of
+  the crop residues within r km of existing plants, per municipality N1 × the share of its crop area within r km
+  (`reach_hist`), with the factor envelope — theoretical methane, drawn apart from the flows, not a supply.
+* **Checks** (`checks_demo.json`): zero replacement closes every composition; CLR rows sum to zero; the chosen k
+  lies inside the range and its smallest type is large enough; every official volume has its act, URL and access
+  date; the bases implied by the two official volumes agree within 5 %; the stock lies within its envelope and
+  below the national N1.
+
+## 11. Municipal sanitation (platform feed, not part of the paper)
 
 `bbp run sanitation` builds one series of urban solid waste, sewage and
 population per municipality from the two federal sanitation surveys. It feeds

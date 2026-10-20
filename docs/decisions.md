@@ -6,6 +6,9 @@ One line per decision, newest first. Open items are at the end.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-19 | Typology: CLR of the regional crop composition, Ward clustering, k by stability (Ward vs k-means ARI) with every type ≥ 10 regions; detection limit 0.1 % for zeros | On these data the silhouette grows with k down to 2-region types; stability under a minimum size gives an interpretable k (5) |
+| 2026-10-19 | Mandate volumes taken as stated by the acts (CNPE Res. 4/2026 art. 3: 504.8 thousand m³/d; MME Ord. 942/2026: 995.2 thousand m³/d); 2028–2030 derived from the 2027 base and labelled indicative | No conversion needed; the exploratory 0.31 M m³/d made the 2026 coverage look 1.63× larger than it is (504.8 / 310) |
+| 2026-10-19 | Mandate stock = N1 within reach of existing plants (theoretical), never added to the flows | Stock and flow are different quantities; N2–N4 stay out of this paper |
 | 2026-10-19 | Scale (MAUP): main rule = area fraction (a unit's crop spread like its land); centroid and representative point as sensitivity; pixel as reference | A statistical unit knows its crop area and its geometry, not where the crop sits inside it; the point rules are what most regional studies do |
 | 2026-10-19 | Unit land area from the ~480 m cells (cell centre in the municipality) | Matches the IBGE municipal areas to a median 0.15 %; a 30 m pass over all land would add hours for no visible gain |
 | 2026-10-19 | Reach measured from the 30 m pixels (coverage + second crop 2024), not from aggregated cells; the ~480 m cells kept only as a check of the aggregation effect | The pixel is the reference resolution of the funnel; the check shows how much aggregation would move the result |
