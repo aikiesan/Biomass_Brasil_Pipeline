@@ -50,11 +50,11 @@ from bbp.paper import (
 
 log = logging.getLogger("bbp")
 
-# log-ratio classes, symmetric on the log scale: ±10, 25, 50, 100 %
-RATIO_EDGES = [1 / 2, 1 / 1.5, 1 / 1.25, 1 / 1.1, 1.1, 1.25, 1.5, 2.0]
+# observed/declared classes: the agreement band of Fig 3 (|obs/dec − 1| ≤ 25 %), then up to half / double
+RATIO_EDGES = [0.5, 0.75, 1.25, 2.0]
 DEC_ONLY, OBS_ONLY = -1, 9          # class codes for "only one source reports the crop"
 ONE_SOURCE = {DEC_ONLY: ("white", "//////"), OBS_ONLY: ("white", "......")}
-ONE_SOURCE_LABELS = {DEC_ONLY: "PAM only (no MapBiomas area)", OBS_ONLY: "MapBiomas only (no PAM area)"}
+ONE_SOURCE_LABELS = {DEC_ONLY: "PAM only", OBS_ONLY: "MapBiomas only"}
 SECOND_CROP = "corn_2nd"
 FACTOR_TICKS = [1.25, 1.5, 2, 3, 5, 10, 20, 50, 100]
 DATA_CREDIT = "MapBiomas Col. 11; IBGE PAM (this study)"
@@ -98,15 +98,14 @@ class _Data:
 
 
 def ratio_classes() -> tuple[np.ndarray, list, list[str]]:
-    """log-ratio bin edges, one colour per class (blue: MapBiomas below PAM, red: above, grey: ±10 %), labels."""
+    """log-ratio bin edges, one colour per class (blue: MapBiomas below PAM, red: above, grey: within ±25 %),
+    labels from low to high."""
     from matplotlib import colormaps
 
     edges = np.log(RATIO_EDGES)
     cmap = colormaps["RdBu_r"]
-    colors = [cmap(x) for x in (0.0, 0.14, 0.27, 0.38)] + ["#d4d4d4"] + [cmap(x) for x in (0.62, 0.73, 0.86, 1.0)]
-    pct = ["−50 %", "−33 %", "−20 %", "−9 %", "+10 %", "+25 %", "+50 %", "+100 %"]
-    labels = [f"< {pct[0]}"] + [f"{a} to {b}" for a, b in zip(pct[:-1], pct[1:], strict=True)] + [f"> {pct[-1]}"]
-    labels[4] = "±10 % (agree)"
+    colors = [cmap(0.02), cmap(0.3), "#d6d6d6", cmap(0.7), cmap(0.98)]
+    labels = ["< −50 %", "−50 to −25 %", "within ±25 %", "+25 to +100 %", "> +100 %"]
     return edges, colors, labels
 
 
@@ -197,16 +196,22 @@ def _plot_classes(ax, gdf, classes: pd.Series, colors: list, edge: float = 0.0, 
             merged.plot(ax=ax, facecolor=fc, edgecolor=fs.MUTED, hatch=hatch, linewidth=0, rasterized=True, zorder=1)
 
 
+RATIO_LEGEND_H = 4 * fs.ROW + 0.5      # height of _ratio_legend (mm)
+
+
 def _ratio_legend(cv: Canvas, x: float, y_top: float, years: list[int], min_area: float):
-    """The log-ratio legend in three columns (5 + 4 classes, then the categories that cannot be compared)."""
+    """The observed/declared legend in one band of four columns, read as what the satellite sees against the
+    statistics: more, agree, less, and what cannot be compared."""
     _, colors, labels = ratio_classes()
-    rows = [("patch", c, lab) for c, lab in zip(colors[::-1], labels[::-1], strict=True)]
-    first_row = y_top - 3.9 - fs.ROW
-    cv.legend(x, y_top, [(f"A$_{{obs}}$ / A$_{{dec}}$, median {years[0]}–{years[-1]}", rows[:5])])
-    cv.legend(x + 40, first_row, [(None, rows[5:])], header=None)
-    cv.legend(x + 78, y_top - 3.9, [("Not comparable", [
-        ("patch", {"fc": fc, "hatch": h, "ec": fs.MUTED}, ONE_SOURCE_LABELS[k]) for k, (fc, h) in ONE_SOURCE.items()]
-        + [("patch", {"fc": "white", "ec": fs.HAIR}, f"Neither source ≥ {min_area:g} ha")])], header=None)
+    patch = {lab: ("patch", c, lab) for c, lab in zip(colors, labels, strict=True)}
+    cols = [("Satellite sees more", [patch["> +100 %"], patch["+25 to +100 %"]]),
+            ("Sources agree", [patch["within ±25 %"]]),
+            ("Satellite sees less", [patch["−50 to −25 %"], patch["< −50 %"]]),
+            ("Not comparable", [("patch", {"fc": fc, "hatch": h, "ec": fs.MUTED}, ONE_SOURCE_LABELS[k])
+                                for k, (fc, h) in ONE_SOURCE.items()]
+             + [("patch", {"fc": "white", "ec": fs.HAIR}, f"neither ≥ {min_area:g} ha")])]
+    for i, (title, rows) in enumerate(cols):
+        cv.legend(x + (0.0, 29.0, 55.0, 85.0)[i], y_top, [(title, rows)], header=None)
 
 
 def _factor_axis(ax, axis: str = "x", lo: float = 0.0, hi: float = 3.0, title: str = ""):
@@ -1175,14 +1180,25 @@ def _crop_maps_layout(ext, ncol: int = 4, width: float = fs.FULL_W, gap: float =
     return S, (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
 
 
-def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data, host=None):
+def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data, host=None, crops: list[str] | None = None,
+                         ncol: int | None = None):
+    """Observed/declared area per municipality, one map per crop at one scale. Fig 4 draws the crops in
+    paper.fig4.crops (default: soybean, corn 2nd season, sugarcane) in one row; the supplement draws them all."""
     g, states, country, ext = data.base()
     units = data.get("unit_ratios_municipality")
     years = summary_years(cfg)
     min_area = float(cfg.section("reconcile").get("min_area_ha", 0))
-    crops = [c for c in cfg.crops if c in set(units["crop"])]
+    present = [c for c in cfg.crops if c in set(units["crop"])]
+    if crops is None:
+        crops = (cfg.section("paper").get("fig4") or {}).get("crops") or ["soybean", "corn_2nd", "sugarcane"]
+    crops = [c for c in crops if c in present]
+    ncol = ncol or len(crops)
+    ag = data.get("agreement_by_scale")
+    share = ag[ag["year"].isin(years) & (ag["scale"] == "municipality")].groupby("crop")[
+        "area_share_within_25pct"].mean()
     edges, colors, _ = ratio_classes()
-    ncol, gap, LB, title_h = 4, 1.5, 21.0, 4.0
+    gap, title_h = 1.5, 4.0
+    LB = RATIO_LEGEND_H + 4.0                              # legend band and the credit line under the maps
     S, MW, MH = _crop_maps_layout(ext, ncol, gap=gap)
     nrow = int(np.ceil(len(crops) / ncol))
     row_h = MH + title_h
@@ -1196,23 +1212,31 @@ def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data, host=None):
         _plot_classes(a, g, classify(lr, edges), colors)
         boundaries(a, states, country, 0.25)
         map_frame(a, ext)
-        finite = lr[np.isfinite(lr)]
-        within = float((np.abs(finite) <= np.log(1.1)).mean()) if len(finite) else np.nan
         cv.text(x + 0.5, y + MH + 0.6, fs.label(c), fontsize=fs.FS_TITLE + 0.4, fontweight="bold", va="bottom")
-        cv.text(x + 0.5, y + 0.6, f"±10 %: {within:.0%}", fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom")
+        if np.isfinite(share.get(c, np.nan)):
+            cv.text(x + 0.5, y + 0.6, f"{share[c] * 100:.0f} % of area\nwithin ±25 %", fontsize=fs.FS_CRED,
+                    color=fs.MUTED, va="bottom", linespacing=1.1)
         ck.add(f"fig05_{c}_has_municipalities", len(lr) > 0, f"{len(lr)} municipalities scored", len(lr),
                severity="warn")
-    if len(crops) % ncol:                                  # furniture in the empty cell
+    # north arrow and scale bar: in the empty cell if there is one, else in the south-east corner (Atlantic)
+    # of the last map of the first row
+    if len(crops) % ncol:
         r, col = divmod(len(crops), ncol)
-        x, y = 1.0 + col * (MW + gap), LB + (nrow - 1 - r) * row_h
-        cv.north(x + 3.0, y + MH - 6.5)
-        cv.scale(x + 7.5, y + MH - 6.7, S, seg_km=1000, n=1)
-        cv.credits(x + 1.0, y + MH - 11.0, "MapBiomas Col. 11;\nIBGE PAM (this study)", narrow=True)
+        xr, yr = 1.0 + col * (MW + gap), LB + (nrow - 1 - r) * row_h + MH / 2
     else:
-        cv.strip(1.0, S, DATA_CREDIT, y0=LB - fs.STRIP)
-    _ratio_legend(cv, 1.0, LB - 0.5, years, min_area)
+        xr, yr = 1.0 + (min(ncol, len(crops)) - 1) * (MW + gap), LB + (nrow - 1) * row_h
+    cv.north(xr + MW - 4.0, yr + 7.5, h=3.2)
+    cv.scale(xr + MW - 19.0, yr + 1.6, S, seg_km=1000, n=1, compact=True)
+    _ratio_legend(cv, 1.0, LB - 1.0, years, min_area)
+    cv.text(FW - 1.0, 0.6, f"SIRGAS 2000 / Brazil Polyconic. {DATA_CREDIT}. {fs.CREDIT_CARTO}", fontsize=fs.FS_CRED,
+            color=fs.MUTED, ha="right", va="bottom")
     ck.add("fig05_scale", True, f"{S:,.0f} m per mm", S)
     return cv
+
+
+def figS_log_ratio_maps_all(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    """Fig 4 for every crop of the paper, four maps per row."""
+    return fig05_log_ratio_maps(cfg, ck, data, host, crops=list(cfg.crops), ncol=4)
 
 
 # ---------------------------------------------------------------------------
@@ -1974,7 +1998,8 @@ SUPPLEMENT = {"S1": ("national_area", fig03_national_area), "S2": ("example_muni
               "S10": ("regions_within_reach", _explore("x06_regions")),
               "S11": ("region_typology", _explore("x07_typology")),
               "S12": ("registers_biomethane", _explore("x08_registers")),
-              "S13": ("n1_by_level", figS_n1_levels), "S14": ("n1_hot_spots", figS_hot_spots)}
+              "S13": ("n1_by_level", figS_n1_levels), "S14": ("n1_hot_spots", figS_hot_spots),
+              "S15": ("log_ratio_maps_all_crops", figS_log_ratio_maps_all)}
 
 
 def file_name(key) -> str:
@@ -1982,7 +2007,7 @@ def file_name(key) -> str:
     return f"fig{key:02d}_{name}" if isinstance(key, int) else f"fig{key}_{name}"
 
 
-def build(cfg: Config, ck: CheckLog, only: list[int] | None = None) -> list[Path]:
+def build(cfg: Config, ck: CheckLog, only: list[int | str] | None = None) -> list[Path]:
     from bbp.captions import write_captions
 
     family = fs.setup()
@@ -1993,7 +2018,7 @@ def build(cfg: Config, ck: CheckLog, only: list[int] | None = None) -> list[Path
     formats = spec.get("figure_formats", ["pdf", "svg", "png", "tif"])
     dpi = int(spec.get("dpi", 600))
     data = _Data(cfg, ck)
-    keys = [k for k in FIGURES if not only or k in only] + ([] if only else list(SUPPLEMENT))
+    keys = [k for k in [*FIGURES, *SUPPLEMENT] if not only or k in only]       # only: 3, "S15", ...
     written = []
     for key in keys:
         name, func = FIGURES.get(key) or SUPPLEMENT[key]

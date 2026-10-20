@@ -209,13 +209,13 @@ def test_maps_share_one_true_scale():
     assert figures.nice_scale(39_400) == 40_000
 
 
-def test_log_ratio_classes_are_symmetric_and_keep_one_source_apart():
+def test_log_ratio_classes_follow_the_agreement_band_and_keep_one_source_apart():
     edges, colors, labels = figures.ratio_classes()
-    assert np.allclose(edges, -edges[::-1]) and len(colors) == len(labels) == len(edges) + 1
-    assert np.allclose(np.exp(edges[4:]), [1.1, 1.25, 1.5, 2.0])          # ±10, 25, 50, 100 %
-    cls = figures.classify(pd.Series([-np.inf, 0.0, np.inf, np.nan, -5.0, 5.0]), edges)
-    assert list(cls[:3]) == [figures.DEC_ONLY, 4, figures.OBS_ONLY] and np.isnan(cls[3])
-    assert list(cls[4:]) == [0, 8]                                          # extreme but finite stays a colour
+    assert len(colors) == len(labels) == len(edges) + 1
+    assert np.allclose(np.exp(edges), [0.5, 0.75, 1.25, 2.0])            # the ±25 % band of Fig 3, half, double
+    cls = figures.classify(pd.Series([-np.inf, 0.0, np.inf, np.nan, -5.0, 5.0, np.log(0.8), np.log(1.2)]), edges)
+    assert list(cls[:3]) == [figures.DEC_ONLY, 2, figures.OBS_ONLY] and np.isnan(cls[3])
+    assert list(cls[4:]) == [0, 4, 2, 2]                                   # extreme stays a colour; ±25 % agrees
 
 
 def test_municipal_log_ratio_skips_small_units():

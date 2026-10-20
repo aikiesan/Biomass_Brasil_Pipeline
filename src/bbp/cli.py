@@ -15,7 +15,7 @@
     bbp explore [--only x01 x04]      exploratory figures, each element also on its own (data/paper/explore)
     bbp check-factors                 compare conversion_factors.yaml with the CP2b canonical YAML
     bbp paper [--no-figures]          paper numbers.json, Tables 1–4, Figs 1–9 and S1–S14 (profile `paper`)
-    bbp figures [--only 3 4]          Figs 1–9 and the supplement (--only: those figures)
+    bbp figures [--only 3 S15]        Figs 1–9 and the supplement (--only: those figures)
     bbp --profile paper <command>     merge config/profiles/paper.yaml over pipeline.yaml
     bbp load [--yes] [--dry-run]      load data/processed into PostgreSQL/PostGIS (schema bbp) as a new release
     bbp db-status                     list the releases in the database
@@ -159,8 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     xp.add_argument("--only", nargs="*", help="figure keys, e.g. x01 x04 (default: all)")
     pp = sub.add_parser("paper", help="numbers.json, Tables 1–4 and the figures of the paper")
     pp.add_argument("--no-figures", action="store_true", help="numbers and tables only")
-    fg = sub.add_parser("figures", help="Figs 1–9 and S1–S14 of the paper")
-    fg.add_argument("--only", type=int, nargs="*", help="figure numbers (default: all)")
+    fg = sub.add_parser("figures", help="Figs 1–9 and S1–S15 of the paper")
+    fg.add_argument("--only", type=lambda s: int(s) if s.isdigit() else s.upper(), nargs="*",
+                    help="figure keys, e.g. 3 4 S15 (default: all)")
 
     args = ap.parse_args(argv)
     profile = args.profile or ("paper" if args.command in ("paper", "figures", "landcover", "plants", "reach",

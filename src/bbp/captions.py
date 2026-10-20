@@ -101,9 +101,12 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             "source only counts as disagreeing. Dashed: (semi-)perennials. The share of units within ±25 % is in "
             "Table 2.",
         "log_ratio_maps":
-            f"Observed / declared area per municipality, median {s0}–{s1}, on classes symmetric on the log "
-            "scale (±10, 25, 50, 100 %); all maps at the same scale. Hatched: the crop is reported by one source "
-            f"only. Blank: neither source reaches {min_area:g} ha. SIRGAS 2000 / Brazil Polyconic.",
+            f"Where the satellite sees more or less than the statistics: observed (MapBiomas) / declared (IBGE PAM) "
+            f"area per municipality, median {s0}–{s1}, for soybean, second-season corn and sugarcane. Grey: the "
+            "two sources agree within ±25 %, as in Fig 3; red: the satellite sees more; blue: less. Hatched or "
+            f"dotted: the crop is reported by one source only. Blank: neither source reaches {min_area:g} ha. "
+            "Below each map: the share of the declared area within ±25 %. The other crops: Fig S15. SIRGAS 2000 / "
+            "Brazil Polyconic.",
         "h2_drivers":
             f"Why the sources diverge (H2): municipal ln(A_obs/A_dec), {s0}–{s1}, mixed model per crop. "
             "(a) Standardised effects of the predictors, change per standard deviation with 95 % confidence "
@@ -190,6 +193,9 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             f"N₁ per km² ({year}, observed area, CP2b reference factors) at three levels on the same classes "
             "(quantiles of the municipal density): (a) state, (b) intermediate region, (c) municipality.",
         "n1_hot_spots": _hot_spots(year, facts.get("n1_hot_spots") or {}),
+        "log_ratio_maps_all_crops":
+            f"Fig 4 for every crop: observed / declared area per municipality, median {s0}–{s1}, on the same "
+            "classes and scale.",
     }
 
 
