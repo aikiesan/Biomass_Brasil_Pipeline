@@ -1097,40 +1097,73 @@ def fig03_national_area(cfg: Config, ck: CheckLog, data: _Data, host=None):
 # Fig 4 — agreement vs scale (C1)
 # ---------------------------------------------------------------------------
 def fig04_agreement_scale(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    """H1 in two steps: (a) how much of the declared area sits in units where the two sources agree, from the
+    municipality up to the state; (b) the ratio of the national totals against the same ±25 % band."""
     from matplotlib.ticker import PercentFormatter
 
     ag = data.get("agreement_by_scale")
     years = summary_years(cfg)
     crops = [c for c in cfg.crops if c in set(ag["crop"])]
-    scales = [s for s in ("municipality", "amc", "rgint", "uf") if s in set(ag["scale"])]
-    m = ag[ag["year"].isin(years)].groupby(["crop", "scale"])[["area_share_within_25pct",
-                                                               "share_within_25pct"]].mean()
+    scales = [s for s in ("municipality", "rgint", "uf") if s in set(ag["scale"])]   # AMC ≈ municipality
+    cur = ag[ag["year"].isin(years)]
+    m = cur.groupby(["crop", "scale"])["area_share_within_25pct"].mean()
+    nat = cur[cur["scale"] == "nation"].groupby("crop")["ratio_total"].mean()
+    tol = 0.25
     FW, FH = fs.FULL_W, 64.0
     cv = fs.canvas(FW, FH, host)
+    y0, ph = 11.0, 44.0
+
+    # ---- (a) agreement as the scale grows ----------------------------------------------------------------------
+    xa, wa = 13.0, 44.0
+    a = _chart_axes(cv, xa, y0, wa, ph, grid_y=True)
     xs = np.arange(len(scales))
-    pw, ph, y0 = 45.0, 44.0, 11.0
-    for i, (key, title) in enumerate([("area_share_within_25pct", "Weighted by declared area"),
-                                      ("share_within_25pct", "Share of units")]):
-        x0 = 13.0 + i * (pw + 7.0)
-        a = _chart_axes(cv, x0, y0, pw, ph, grid_y=True)
-        ends = []
-        for c in crops:
-            y = [m[key].get((c, s), np.nan) for s in scales]
-            fs.crop_line(a, xs, y, c)
-            ends.append((fs.label(c), xs[-1] + 0.05, y[-1], fs.CROP_COLORS[c]))
-        a.set_xticks(xs, [SCALE_LABELS[s].replace("Intermediate region", "Intermediate\nregion") for s in scales])
-        a.set_xlim(-0.25, len(scales) - 0.75)
-        a.set_ylim(0, 1)
-        a.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
-        if i:
-            a.set_yticklabels([])
-            fs.direct_labels(a, ends, x_pad=0.3, min_gap=0.062, fontsize=fs.FS_ITEM)
-        else:
-            a.set_ylabel(f"Within ±25 % of each other\n(mean {years[0]}–{years[-1]})")
-        cv.text(x0, y0 + ph + 1.5, title, fontsize=fs.FS_LABEL, fontweight="bold", va="bottom")
-    cv.legend(14.0, y0 + ph - 1.0, [("", [("line", (fs.MUTED, 0.9), "annual crop"),
-                                          ("line", (fs.MUTED, 0.9, (0, (3.5, 1.4))), "(semi-)perennial")])],
+    ends = []
+    for c in crops:
+        y = [m.get((c, s), np.nan) for s in scales]
+        fs.crop_line(a, xs, y, c)
+        ends.append((fs.label(c), xs[-1] + 0.05, y[-1], fs.CROP_COLORS[c]))
+    a.set_xticks(xs, [SCALE_LABELS[s].replace("Intermediate region", "Intermediate\nregion") for s in scales])
+    a.set_xlim(-0.2, len(scales) - 0.8)
+    a.set_ylim(0, 1)
+    a.yaxis.set_major_formatter(PercentFormatter(1, decimals=0))
+    a.set_ylabel(f"Declared area in units where the\nsources agree within ±{tol * 100:.0f} %")
+    fs.direct_labels(a, ends, x_pad=0.25, min_gap=0.062, fontsize=fs.FS_ITEM)
+    cv.text(xa - 11.5, y0 + ph + 1.5, "(a) Zooming out: agreement by scale", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="bottom")
+    cv.legend(xa + 1.0, y0 + 9.0, [("", [("line", (fs.MUTED, 0.9), "annual crop"),
+                                         ("line", (fs.MUTED, 0.9, (0, (3.5, 1.4))), "(semi-)perennial")])],
               header=None)
+
+    # ---- (b) Brazil: ratio of the national totals --------------------------------------------------------------
+    xb, wb = 98.0, 32.0
+    b = _chart_axes(cv, xb, y0, wb, ph)
+    rows = list(reversed(crops))
+    yb = np.arange(len(rows))
+    b.axvspan(1 - tol, 1 + tol, color="#ececec", lw=0, zorder=0)
+    b.axvline(1.0, color=fs.MUTED, lw=0.5, zorder=1)
+    for i, c in enumerate(rows):
+        r = nat.get(c, np.nan)
+        if not np.isfinite(r):
+            continue
+        b.plot([1.0, r], [i, i], color=fs.CROP_COLORS[c], lw=0.9, zorder=2)
+        st = fs.crop_style(c)
+        b.plot([r], [i], st["marker"], color=st["color"], ms=3.6, mec=fs.INK, mew=0.3, zorder=3)
+        inside = abs(r - 1) <= tol
+        b.text(r + (0.035 if r >= 1 else -0.035), i, f"{r:.2f}", fontsize=fs.FS_CRED, va="center",
+               ha="left" if r >= 1 else "right", color=fs.INK if inside else fs.DETAIL,
+               fontweight="normal" if inside else "bold")
+    b.set_yticks(yb, [fs.label(c) for c in rows], fontsize=fs.FS_ITEM)
+    b.tick_params(axis="y", length=0)
+    b.set_ylim(-0.6, len(rows) + 0.15)
+    b.set_xlim(0.45, 1.55)
+    b.set_xticks([0.5, 0.75, 1.0, 1.25, 1.5], ["0.5", "0.75", "1", "1.25", "1.5"])
+    b.set_xlabel("Observed / declared area, Brazil")
+    b.text(1.0, len(rows) - 0.4, f"agree within ±{tol * 100:.0f} %", fontsize=fs.FS_CRED, color=fs.MUTED,
+           ha="center", va="center")
+    cv.text(xb - 18.0, y0 + ph + 1.5, "(b) Brazil: the national totals", fontsize=fs.FS_LABEL, fontweight="bold",
+            va="bottom")
+    outside = [c for c in crops if np.isfinite(nat.get(c, np.nan)) and abs(nat[c] - 1) > tol]
+    ck.add("fig03_national_ratio", bool(len(nat)), f"outside ±{tol * 100:.0f} % nationally: {outside}", outside)
     return cv
 
 

@@ -93,10 +93,13 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             "the checks caught in the source data, marked where it was caught. Every number in the text comes from numbers.json and the "
             "check logs written by the same run.",
         "agreement_scale":
-            f"Agreement between observed and declared area from municipality to state (H1): share of the units "
-            f"where the two sources are within ±25 % of each other, weighted by declared area (left) and by "
-            f"number of units (right), mean {s0}–{s1}. Units where neither source reaches {min_area:g} ha are "
-            "not scored; a unit with area in one source only counts as disagreeing. Dashed: (semi-)perennials.",
+            f"Do the satellite (MapBiomas) and the statistics (IBGE PAM) agree, and at what scale? (H1), mean "
+            f"{s0}–{s1}. (a) Share of the declared area that lies in units where the two sources are within ±25 % "
+            "of each other (|observed/declared − 1| ≤ 0.25), from the municipality to the state (AMCs, not shown, "
+            "match the municipalities). (b) Ratio of the national totals, observed/declared; grey band: the same "
+            f"±25 %. Units where neither source reaches {min_area:g} ha are not scored; a unit with area in one "
+            "source only counts as disagreeing. Dashed: (semi-)perennials. The share of units within ±25 % is in "
+            "Table 2.",
         "log_ratio_maps":
             f"Observed / declared area per municipality, median {s0}–{s1}, on classes symmetric on the log "
             "scale (±10, 25, 50, 100 %); all maps at the same scale. Hatched: the crop is reported by one source "
