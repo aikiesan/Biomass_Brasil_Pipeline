@@ -178,3 +178,61 @@ def morans_i(values: pd.Series, neighbours: dict[int, list[int]], permutations: 
     sims = np.array([stat(rng.permutation(x)) for _ in range(permutations)])
     p = (np.sum(np.abs(sims - sims.mean()) >= abs(i_obs - sims.mean())) + 1) / (permutations + 1)
     return {"morans_i": i_obs, "expected": -1 / (len(v) - 1), "p_value": float(p), "n": int(has.sum())}
+
+
+def _pairs(v: pd.Series, neighbours: dict[int, list[int]]) -> tuple[np.ndarray, np.ndarray]:
+    idx = {c: k for k, c in enumerate(v.index)}
+    rows, cols = [], []
+    for c in v.index:
+        nbs = [idx[n] for n in neighbours.get(int(c), []) if n in idx]
+        rows += [idx[c]] * len(nbs)
+        cols += nbs
+    return np.asarray(rows, dtype=int), np.asarray(cols, dtype=int)
+
+
+def getis_ord_gi_star(values: pd.Series, neighbours: dict[int, list[int]]) -> pd.Series:
+    """Getis–Ord Gi* (binary weights, the unit itself included): z-score per unit, analytic (normal) inference."""
+    v = values.dropna()
+    x = v.to_numpy(dtype=float)
+    n = len(x)
+    rows, cols = _pairs(v, neighbours)
+    rows = np.concatenate([rows, np.arange(n)])              # Gi*: each unit is its own neighbour
+    cols = np.concatenate([cols, np.arange(n)])
+    wsum = np.bincount(rows, minlength=n).astype(float)      # binary: Σw = Σw² = number of neighbours + 1
+    lag = np.bincount(rows, weights=x[cols], minlength=n)
+    xbar, s = x.mean(), np.sqrt((x ** 2).mean() - x.mean() ** 2)
+    den = s * np.sqrt((n * wsum - wsum ** 2) / (n - 1))
+    z = np.where(den > 0, (lag - xbar * wsum) / np.where(den > 0, den, 1.0), np.nan)
+    return pd.Series(z, index=v.index, name="gi_star_z")
+
+
+def local_moran(values: pd.Series, neighbours: dict[int, list[int]], permutations: int = 999,
+                seed: int = SEED) -> pd.DataFrame:
+    """Local Moran's I (row-standardised weights) with conditional-permutation pseudo p-values (folded, as in
+    PySAL) and the quadrant: HH, LL, HL, LH. Units without neighbours get NaN."""
+    v = values.dropna()
+    x = v.to_numpy(dtype=float)
+    n = len(x)
+    z = x - x.mean()
+    m2 = (z ** 2).sum() / n
+    rows, cols = _pairs(v, neighbours)
+    deg = np.bincount(rows, minlength=n)
+    lag = np.bincount(rows, weights=z[cols], minlength=n) / np.where(deg > 0, deg, 1)
+    li = z * lag / m2
+    rng = np.random.default_rng(seed)
+    p = np.full(n, np.nan)
+    for i in np.flatnonzero(deg > 0):
+        others = np.delete(z, i)
+        k = int(deg[i])
+        if n - 1 <= 200:                                     # small sets: exact draws without replacement
+            draws = np.argsort(rng.random((permutations, n - 1)), axis=1)[:, :k]
+        else:                                                # k << n: with replacement, repeats negligible
+            draws = rng.integers(0, n - 1, size=(permutations, k))
+        sims = z[i] * others[draws].mean(axis=1) / m2
+        larger = int((sims >= li[i]).sum())
+        larger = min(larger, permutations - larger)
+        p[i] = (larger + 1) / (permutations + 1)
+    quad = np.select([(z > 0) & (lag > 0), (z < 0) & (lag < 0), (z > 0) & (lag < 0), (z < 0) & (lag > 0)],
+                     ["HH", "LL", "HL", "LH"], default="")
+    quad = np.where(deg > 0, quad, "")
+    return pd.DataFrame({"local_i": np.where(deg > 0, li, np.nan), "p_value": p, "quadrant": quad}, index=v.index)

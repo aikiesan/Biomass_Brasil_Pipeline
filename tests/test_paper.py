@@ -22,7 +22,8 @@ def _attrs(n=12):
     return pd.DataFrame({"geocode": codes, "name": [f"M{i}" for i in range(n)],
                          "uf": ["SP"] * (n // 2) + ["MG"] * (n - n // 2),
                          "cd_rgint": pd.array([3501] * (n // 2) + [3101] * (n - n // 2), dtype="Int64"),
-                         "is_municipality": True, "amc_id": codes, "amc_size": 1, "created_after_start": False})
+                         "is_municipality": True, "amc_id": codes, "amc_size": 1, "created_after_start": False,
+                         "area_km2_ibge": 1000.0})
 
 
 def _area(attrs, seed=3):
@@ -173,10 +174,11 @@ def test_figures_are_written_without_h2_tables_or_rasters(run, tmp_path):
     ck = CheckLog("figures")
     written = figures.build(cfg, ck)
     assert not ck.failures, [(c.name, c.detail) for c in ck.failures]
-    skipped = {6, 7, 8}                                   # coverage raster and H2 tables absent
+    # H2 tables (Fig 5), coverage raster (S2) and the plants/reach/demo tables (Figs 7–9, S8–S12) absent
+    skipped = {5, 7, 8, 9, "S2", "S8", "S9", "S10", "S11", "S12"}
     expected = [figures.file_name(k) + ".png" for k in [*figures.FIGURES, *figures.SUPPLEMENT] if k not in skipped]
     assert sorted(p.name for p in written) == sorted(expected)
-    assert any(c.name == "fig7_built" and not c.passed and c.severity == "warn" for c in ck.checks)
+    assert any(c.name == "fig5_built" and not c.passed and c.severity == "warn" for c in ck.checks)
     assert (tmp_path / "paper" / "captions.md").read_text(encoding="utf-8").count("**Figure") ==         len(figures.FIGURES) + len(figures.SUPPLEMENT)
     assert (tmp_path / "paper" / "fig06_candidates.csv").exists()
     assert any((tmp_path / "paper" / "figures_check").glob("*_deutan.png"))

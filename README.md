@@ -136,7 +136,7 @@ file, with size, SHA-256, row count and columns) — ready to deposit on Zenodo/
 ## Paper package
 
 ```bash
-bbp paper                      # numbers.json, Tables 1–5, Figs 1–10 + S1–S4, captions (profile `paper`)
+bbp paper                      # numbers.json, Tables 1–5, Figs 1–9 + S1–S14, captions (profile `paper`)
 bbp paper --no-figures         # numbers and tables only
 bbp figures --only 4 5         # selected figures
 bbp landcover [--budget 150]   # Fig 1 land-cover display rasters from the 30 m coverage (once; resumable;
