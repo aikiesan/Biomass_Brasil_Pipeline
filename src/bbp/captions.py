@@ -131,22 +131,23 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
             f"The plants by family and register, over the crops they draw on (MapBiomas Collection 11 {year}); "
             "marker area proportional to capacity; open markers: construction, expansion or inactive.",
         "maup_access":
-            f"The same question read at three supports (MAUP): share of each crop's area within a radius of a "
-            f"plant, measured from the 30 m pixels and from the land of the municipality and of the intermediate "
-            f"region (a unit's crop is spread like its land: area-fraction rule), {year}. Red: the gap at 30 km "
-            "between the pixels and the coarsest reading. Centroid and representative-point rules: table "
-            "reach_scale of the release.",
+            f"The same question read at three supports (MAUP): share of each crop's area within 30 km of a "
+            f"paired plant, {year}, measured from the 30 m pixels (reference), from the land of the municipality "
+            "and from the land of the intermediate region (a unit's crop is spread like its land: area-fraction "
+            "rule). Right: the region minus the pixel, in percentage points (red: 3 points or more). Other radii "
+            "and the centroid and representative-point rules: table reach_scale of the release.",
         "typology_mandate":
             f"A demonstration. (a) Types of crop composition of the 133 intermediate regions ({year}; centred "
             "log-ratio of the crop shares, Ward clustering, number of types chosen by stability); grey: less "
             f"than {ty.get('min_crop_kha', '[n/a]')} kha of crops. (b) N₁ of each region's crop residues "
             "(observed area, CP2b reference factors) against the share of its crop area within 30 km of a "
             "biogas plant; marker area: biogas plants in the region; ringed and numbered: priority regions (top "
-            "quartile of N₁, under 25 % within 30 km). (c) Biomethane mandate: targets as volumes (official: "
-            "CNPE Res. 4/2026 and MME Ordinance 942/2026; hatched: 2028–2030 derived from the 2027 base), ANP "
-            "authorised capacity and production (flows), and N₁ of the crops within 30 km of the existing "
-            "biomethane plants (stock; band: factor envelope). The stock is theoretical methane, not an "
-            "available supply.",
+            "quartile of N₁, under 25 % within 30 km; shaded). Types coloured after their dominant crop, as in "
+            "Figs 3–7, and listed by N₁ (number of regions). (c) Biomethane mandate on one axis, million m³ per "
+            "day: targets (filled: official volumes, CNPE Res. 4/2026 and MME Ordinance 942/2026; open: "
+            "2028–2030, derived from the 2027 base), ANP production and authorised capacity at the cut-off "
+            "(flows), and N₁ of the crops within 30 km of the existing biomethane plants (stock; band: factor "
+            "envelope). The stock is theoretical methane, not an available supply.",
         # ---- supplement ------------------------------------------------------------------------------------------
         "national_area":
             f"National crop area {p0}–{p1}: observed (MapBiomas Collection 11; second-season corn from the "

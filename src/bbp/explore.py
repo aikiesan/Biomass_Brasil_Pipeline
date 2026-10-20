@@ -727,6 +727,11 @@ UF_REGION = {**dict.fromkeys(["AC", "AP", "AM", "PA", "RO", "RR", "TO"], "N"),
 
 
 TYPE_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#9c755f", "#76b7b2", "#edc948", "#ff9da7"]
+# types named after their dominant crops take that crop's colour (Figs 3-7); the rest fall back to TYPE_COLORS
+TYPE_STYLE = {"soybean": fs.CROP_COLORS["soybean"], "soybean + other": "#8fbbd9",
+              "sugarcane + soybean": fs.CROP_COLORS["sugarcane"], "other + coffee": "#e8a27a", "other": "#cbbd9e"}
+TYPE_TITLE = {"soybean": "Soybean", "soybean + other": "Soybean and others", "sugarcane + soybean":
+              "Sugarcane and soybean", "other + coffee": "Others and coffee", "other": "Others"}
 MINOR = "#e6e6e6"
 
 
@@ -742,11 +747,14 @@ def _typology(ctx: Ctx) -> dict | None:
         return None
     ty = ty.set_index("cd_rgint")
     names = ty[ty["cluster"] > 0].groupby("cluster")["cluster_name"].first()
-    col = {int(k): TYPE_COLORS[(int(k) - 1) % len(TYPE_COLORS)] for k in names.index}
+    n1 = ty[ty["cluster"] > 0].groupby("cluster")["n1_ref_nm3"].sum()
+    names = names.reindex(n1.sort_values(ascending=False).index)          # types in the order of their N1
+    col = {int(k): TYPE_STYLE.get(v, TYPE_COLORS[(int(k) - 1) % len(TYPE_COLORS)]) for k, v in names.items()}
     col[0] = MINOR
     t = ty[ty["cluster"] > 0]
     pr = t[t["priority"]].sort_values("n1_ref_nm3", ascending=False)
-    return {"ty": ty, "names": names, "col": col, "t": t, "pr": pr}
+    return {"ty": ty, "names": names, "col": col, "t": t, "pr": pr,
+            "count": t.groupby("cluster").size(), "n1": n1}
 
 
 def _types_map(ctx: Ctx, cv: Canvas, x: float, y0: float, S: float, d: dict, title: str, panel: str):
@@ -774,14 +782,40 @@ def _reach_scatter(c, d: dict, compact: bool = False):
     c.set_xscale("log")
     c.set_ylim(-0.03, 1.03)
     c.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
-    c.axvline(t["n1_ref_nm3"].quantile(0.75) / 1e9, color=fs.HAIR, lw=0.5, zorder=1)
+    q75 = t["n1_ref_nm3"].quantile(0.75) / 1e9
+    c.axvline(q75, color=fs.HAIR, lw=0.5, zorder=1)
     c.axhline(0.25, color=fs.HAIR, lw=0.5, zorder=1)
-    for j, (_, r) in enumerate(pr.iterrows(), start=1):
+    xr = t["n1_ref_nm3"].max() / 1e9 * 1.6
+    c.fill_between([q75, xr], -0.05, 0.25, color="#fbe3e3", lw=0, zorder=0)         # the priority quadrant
+    for _, r in pr.iterrows():
         c.scatter(r["n1_ref_nm3"] / 1e9, r[SHARE_COL], s=16, facecolors="none", edgecolors=fs.INK, linewidths=0.5,
                   zorder=4)
-        c.annotate(str(j), (r["n1_ref_nm3"] / 1e9, r[SHARE_COL]), xytext=(2.5, 2.5 + 3.2 * (j % 3)),
-                   textcoords="offset points", fontsize=fs.FS_TEXT - 1.8, color=fs.INK, zorder=5)
-    c.set_xlim(left=0.01)
+    c.set_xlim(0.01, xr)
+    # numbers: the first of eight offsets (points) whose box clears the rings and the numbers already placed
+    fig = c.figure
+    fig.canvas.draw()
+    to_px = c.transData.transform
+    pts = [to_px((r["n1_ref_nm3"] / 1e9, r[SHARE_COL])) for _, r in pr.iterrows()]
+    pp = fig.dpi / 72.0
+    ring = 3.2 * pp
+    taken = [(x - ring, y - ring, x + ring, y + ring) for x, y in pts]
+    cands = [(4, 3), (4, -7), (-9, 3), (-9, -7), (6, -2), (-11, -2), (-2, 6), (-2, -11), (5, 9), (-10, 9),
+             (-2, 13), (7, 15), (-12, 15)]
+    ax_box = c.get_window_extent()
+    for j, (x, y) in enumerate(pts, start=1):
+        w, h = (3.6 if j < 10 else 6.4) * pp, 5.0 * pp
+        for dx, dy in cands:
+            bx, by = x + dx * pp, y + dy * pp
+            box = (bx, by, bx + w, by + h)
+            inside = ax_box.x0 <= box[0] and box[2] <= ax_box.x1 and ax_box.y0 <= box[1] and box[3] <= ax_box.y1
+            if inside and not any(box[0] < t[2] and t[0] < box[2] and box[1] < t[3] and t[1] < box[3]
+                                  for t in taken):
+                break
+        taken.append(box)
+        c.annotate(str(j), (r_ := c.transData.inverted().transform((x, y))), xytext=(dx, dy),
+                   textcoords="offset points", fontsize=fs.FS_TEXT - 1.8, color=fs.INK, zorder=5, va="bottom",
+                   ha="left")
+        del r_
     c.text(0.99, 0.97, "priority: top quartile of N1,\n< 25 % within 30 km", transform=c.transAxes, ha="right",
            va="top", fontsize=fs.FS_TEXT - 1.0, color=fs.DETAIL, style="italic")
     c.set_xlabel("N1 of the crop residues (billion Nm³ CH4/yr, log)" if compact else
@@ -791,7 +825,8 @@ def _reach_scatter(c, d: dict, compact: bool = False):
 
 
 def _type_rows(d: dict) -> list:
-    rows = [("patch", {"fc": d["col"][int(k)], "ec": "#7a7a7a"}, f"{int(k)}. {v}") for k, v in d["names"].items()]
+    rows = [("patch", {"fc": d["col"][int(k)], "ec": "#7a7a7a"},
+             f"{TYPE_TITLE.get(v, v)} ({int(d['count'].get(k, 0))})") for k, v in d["names"].items()]
     rows.append(("patch", {"fc": MINOR, "ec": "#7a7a7a"}, "minor agriculture"))
     return rows
 
@@ -869,7 +904,7 @@ def typology_mandate(ctx: Ctx, host=None):
     d = _typology(ctx)
     if d is None or ctx.d("mandate_targets") is None:
         return None
-    RH = X08C_H
+    RH = RULER_H
     ext = ctx.ext
     FW, gap = fs.FULL_W, 4.0
     w = (FW - 2.0 - gap) / 2
@@ -900,7 +935,8 @@ def typology_mandate(ctx: Ctx, host=None):
     cv.text(1.0, RH + 2.0 + 0.4, TYPOLOGY_CREDIT + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED,
             va="bottom", linespacing=1.3)
     cv.panel("legend", 0.5, RH + 2.0, FW - 0.5, y0 - 0.5)
-    x08c_mandate(ctx, host=lambda fw_, fh_: fs.SubCanvas(cv, 0.0, 0.0, fw_, fh_, prefix="c_"), start=2)
+    mandate_ruler(ctx, host=lambda fw_, fh_: fs.SubCanvas(cv, 0.0, 0.0, fw_, fh_, prefix="c_"),
+                  head="(c) Biomethane mandate: targets, flows and the stock within reach")
     return cv
 
 
@@ -1230,4 +1266,128 @@ def reach_result(ctx: Ctx, host=None):
     cv.scale(xl + 2.0, yl + 1.5, S, seg_km=1000, n=1, compact=True)
     cv.text(FW - 1.0, 0.4, f"MapBiomas Col. 11 {ctx.year}, 30 m; plants: ANP, CIBiogás. EPSG:5880. "
             + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, ha="right", va="bottom")
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# Fig 8 — the same question read at three supports (MAUP), at 30 km, and how the gap closes with the radius
+# ---------------------------------------------------------------------------
+MAUP_MARKS = [  # (resolution, rule, label, marker, face, edge, size), drawn back to front
+    ("rgint", "area_fraction", "intermediate region", "^", "#6a6a6a", "#6a6a6a", 4.6),
+    ("municipality", "area_fraction", "municipality", "s", "#c1121f", "#c1121f", 4.2),
+    ("pixel", "pixel", "30 m pixel (reference)", "o", "#1a1a1a", "#1a1a1a", 5.0),
+]
+
+
+def maup_result(ctx: Ctx, host=None):
+    """Fig 8, one chart: the share of each crop within 30 km of a paired plant, read from the 30 m pixels, from the
+    land of the municipality and from the land of the intermediate region (area-fraction rule), with the gap of
+    the region to the pixel on the right. The point rules and the other radii are in
+    the text (bbp scale tables)."""
+    sc = ctx.t("scale")
+    if sc is None:
+        return None
+    r30 = sc[sc["radius_km"] == REACH_RADIUS]
+    pairs = [p for p in REACH_PAIRS if p in set(r30["pair"])]
+    val = r30.set_index(["pair", "resolution", "rule"])["share"]
+    n, rh = len(pairs), 7.0
+    y0, FW = 10.0, fs.FULL_W
+    FH = y0 + n * rh + 9.0
+    cv = fs.canvas(FW, FH, host)
+    xa, wa = 26.0, 88.0
+    a = cv.ax(xa, y0, wa, n * rh)
+    ys = np.arange(n)[::-1]
+    for y, p in zip(ys, pairs, strict=True):
+        vs = [val.get((p, res, rule), np.nan) for res, rule, *_ in MAUP_MARKS]
+        a.plot([np.nanmin(vs), np.nanmax(vs)], [y, y], color="#d4d4d4", lw=2.6, solid_capstyle="round", zorder=1)
+        for (_, _, _, mk, fc, _ec, ms), v in zip(MAUP_MARKS, vs, strict=True):
+            if np.isfinite(v):
+                a.plot(v, y, mk, ms=ms, mfc=fc, mec="white", mew=0.4, zorder=3)
+        px, rg = val.get((p, "pixel", "pixel"), np.nan), val.get((p, "rgint", "area_fraction"), np.nan)
+        a.text(px + 0.025, y + 0.22, f"{100 * px:.1f} %", fontsize=fs.FS_CRED, va="bottom", ha="left")
+        gap = rg - px
+        big = abs(gap) >= 0.03
+        cv.text(xa + wa + 8.5, y0 + (y + 0.5) * rh, f"{100 * gap:+.1f}".replace("-", "−"), fontsize=fs.FS_ITEM,
+                ha="center", va="center", color=fs.DETAIL if big else fs.INK, fontweight="bold" if big else "normal")
+    a.set_yticks(ys, [REACH_TITLE[p] for p in pairs], fontsize=fs.FS_ITEM)
+    a.tick_params(axis="y", length=0)
+    a.set_ylim(-0.6, n - 0.4)
+    a.set_xlim(0, 1.0)
+    a.xaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    a.set_xlabel(f"Crop area within {REACH_RADIUS:.0f} km of a paired plant")
+    axis_style(a)
+    a.spines["left"].set_visible(False)
+    a.grid(axis="x", color=fs.FAINT, lw=0.4)
+    cv.text(xa + wa + 8.5, y0 + n * rh + 0.8, "region − pixel\n(points)", fontsize=fs.FS_CRED, ha="center",
+            va="bottom", linespacing=1.1)
+    cv.text(xa, FH - 2.4, "measured from the", fontsize=fs.FS_CRED, va="center", color=fs.MUTED)
+    kx = xa + 19.0                                        # key above the chart
+    for _, _, lab, mk, fc, _ec, ms in MAUP_MARKS[::-1]:
+        cv.ov.plot([kx + 1.0], [FH - 2.4], mk, ms=ms * 0.85, mfc=fc, mec="white", mew=0.4)
+        cv.text(kx + 2.6, FH - 2.4, lab, fontsize=fs.FS_CRED, va="center")
+        kx += 4.0 + len(lab) * 1.0
+    for p in pairs:
+        ctx.ck.add(f"fig8_{p}_30km", True, "pixel {:.1%}, municipality {:.1%}, region {:.1%}".format(
+            val.get((p, "pixel", "pixel"), np.nan), val.get((p, "municipality", "area_fraction"), np.nan),
+            val.get((p, "rgint", "area_fraction"), np.nan)))
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# Fig 9 bottom row: the biomethane mandate as one ruler (targets, ANP flows and the N1 stock on one axis)
+# ---------------------------------------------------------------------------
+RULER_H = 33.0
+
+
+def mandate_ruler(ctx: Ctx, host=None, head: str | None = None):
+    """Every number of the mandate on one horizontal axis, in million m³ per day: the targets (official volumes
+    filled, indicative ones open), the ANP flows at the cut-off (production and authorised capacity, bars from
+    zero) and the stock, N1 of the crops within 30 km of the existing biomethane plants (band: factor envelope)."""
+    tg, st = ctx.d("mandate_targets"), ctx.d("mandate_stock")
+    snaps = ctx.proc / "plants_biomethane_snapshots.parquet"
+    if tg is None or not snaps.exists():
+        return None
+    cur = pd.read_parquet(snaps).iloc[-1]
+    FW, FH = fs.FULL_W, RULER_H
+    cv = fs.canvas(FW, FH, host)
+    a = cv.ax(24.0, 10.0, FW - 25.5, FH - 16.0)
+    lanes = {"targets": 2.0, "flows": 1.0, "stock": 0.0}
+    vol = (tg["volume_m3d"] / 1e6).to_numpy()
+    off = (tg["volume_source"] == "official").to_numpy()
+    for y_, v, o in zip(tg["year"], vol, off, strict=True):
+        a.plot([v, v], [lanes["targets"] - 0.28, lanes["targets"] + 0.28], color=fs.INK, lw=0.6)
+        a.plot(v, lanes["targets"], "v", ms=4.2, mfc=fs.INK if o else "white", mec=fs.INK, mew=0.7, zorder=4)
+        a.text(v, lanes["targets"] + 0.38, f"{y_}\n{v:.2f}", fontsize=fs.FS_CRED - 0.2, ha="center", va="bottom",
+               linespacing=1.05)
+    green, red = fs.CROP_COLORS["sugarcane"], "#c1121f"
+    for k, (v, col, lab) in enumerate([(cur["produced_m3d"] / 1e6, red, "produced"),
+                                       (cur["authorised_m3d"] / 1e6, green, "authorised")]):
+        yb = lanes["flows"] + (0.17 if k else -0.17)
+        a.barh(yb, v, height=0.28, left=0, color=col, lw=0, zorder=3)
+        a.text(v + 0.06, yb, f"{v:.2f} {lab}", fontsize=fs.FS_CRED - 0.2, va="center", ha="left")
+    if st is not None:
+        s30 = st[(st["pair"] == "all_crops|biomethane") & (st["radius_km"] == REACH_RADIUS)]
+        if len(s30):
+            r = s30.iloc[0]
+            lo, ref, hi = r["n1_min_m3d"] / 1e6, r["n1_ref_m3d"] / 1e6, r["n1_max_m3d"] / 1e6
+            a.barh(lanes["stock"], hi - lo, left=lo, height=0.5, color="#dfeee6", ec="#9cc9b0", lw=0.5, zorder=2)
+            a.plot([ref, ref], [lanes["stock"] - 0.25, lanes["stock"] + 0.25], color="#3f7f5c", lw=1.0, zorder=3)
+            a.text(lo - 0.06, lanes["stock"], f"{ref:.1f} ({lo:.1f}–{hi:.1f})", fontsize=fs.FS_CRED - 0.2,
+                   ha="right", va="center", color="#3f7f5c")
+    a.set_yticks(list(lanes.values()), ["targets", f"ANP, {cur['snapshot']}",
+                                        f"N$_1$ within {REACH_RADIUS:.0f} km"], fontsize=fs.FS_CRED)
+    a.tick_params(axis="y", length=0)
+    a.spines["left"].set_visible(False)
+    a.set_ylim(-0.5, 3.1)
+    a.set_xlim(0, 7.6)
+    a.set_xlabel("Million m³ of methane per day", labelpad=1)
+    axis_style(a, grid_y=False)
+    a.grid(axis="x", color=fs.FAINT, lw=0.4)
+    if head:
+        cv.text(1.0, FH - 0.8, head, fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+    cv.text(FW - 1.0, 0.4, "Filled: official volume (CNPE Res. 4/2026; MME Ord. 942/2026, consultation); open: "
+            "indicative, % × the 2027 base. Flows: ANP open data. Stock: theoretical methane, not supply.",
+            fontsize=fs.FS_CRED - 0.5, color=fs.MUTED, ha="right", va="bottom")
+    ctx.ck.add("fig9_mandate_ruler", True, f"{len(tg)} targets; produced {cur['produced_m3d'] / 1e6:.2f}, "
+               f"authorised {cur['authorised_m3d'] / 1e6:.2f} M m³/d", float(cur["produced_m3d"]))
     return cv

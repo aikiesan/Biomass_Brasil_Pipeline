@@ -2113,7 +2113,7 @@ def fig_typology_mandate(cfg: Config, ck: CheckLog, data: _Data, host=None):
 FIGURES = {1: ("study_area", fig01_study_area), 2: ("workflow", fig02_workflow),
            3: ("agreement_scale", fig04_agreement_scale), 4: ("log_ratio_maps", fig05_log_ratio_maps),
            5: ("h2_drivers", fig_h2), 6: ("source_vs_factors", fig09_source_vs_factors),
-           7: ("distance_to_plants", fig_reach), 8: ("maup_access", _explore("x05_maup")),
+           7: ("distance_to_plants", fig_reach), 8: ("maup_access", _explore("maup_result")),
            9: ("typology_mandate", fig_typology_mandate)}
 # other renderings of a figure, drawn after it (only when their inputs exist), e.g. Fig 1 for 2025
 VARIANTS = {1: lambda cfg: [int(y) for y in _fig1_spec(cfg).get("variants") or []]}
