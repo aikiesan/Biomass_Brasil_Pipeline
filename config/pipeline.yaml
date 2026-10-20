@@ -310,3 +310,47 @@ plants:
       "soybean|biodiesel": {pixel: 0.071, municipality: 0.097, rgint: 0.157}
       "all_crops|biogas": {pixel: 0.247, municipality: 0.249, rgint: 0.256}
       "all_crops|biomethane": {pixel: 0.0206, municipality: 0.0208, rgint: 0.017}
+
+# -----------------------------------------------------------------------------
+# Using the system (`bbp demo`): typology of the intermediate regions and the biomethane mandate ruler.
+# -----------------------------------------------------------------------------
+demo:
+  year: 2024
+  typology:
+    min_crop_kha: 10              # regions with less crop area are 'minor agriculture', not clustered
+    detection_share: 0.001        # parts below 0.1 % of a region's crop area are rounded zeros (CLR zero replacement)
+    k_range: [2, 12]              # Ward on CLR
+    select: stability             # k = best Ward/k-means agreement (ARI) among partitions with every cluster >= min_cluster
+    min_cluster: 10
+    seed: 0
+    # priority: N1 in the top quartile and less than priority_share of all crops within priority_km of a biogas plant
+    priority_n1_quantile: 0.75
+    priority_share: 0.25
+    priority_km: 30
+    expected_priorities: ["Sinop", "Cuiabá", "Barreiras", "Passo Fundo"]   # named in the paper brief; checked, not forced
+  mandate:
+    # GHG reduction targets of the natural-gas market met with biomethane (Lei 14.993/2024). Volumes as stated by
+    # the acts; a target without an official volume gets one from the base of `base_reference` (flagged derived).
+    targets:
+      - {year: 2026, ghg_reduction_pct: 0.5, volume_m3d: 504800, volume_m3_year: 181728000, status: "in force",
+         act: "Resolução CNPE nº 4/2026, art. 3 (DOU 06/05/2026, Seção 1, p. 4)",
+         url: "https://www.gov.br/mme/pt-br/assuntos/conselhos-e-comites/cnpe/resolucoes-do-cnpe/2026/resolucao-4-publicada.pdf",
+         accessed: "2026-10-19"}
+      - {year: 2027, ghg_reduction_pct: 1.0, volume_m3d: 995200, volume_m3_year: 363200000, base_reference: true,
+         status: "proposed, public consultation", act: "Portaria MME nº 942/2026 (consultation opened 06/10/2026)",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+      - {year: 2028, ghg_reduction_pct: 3.0, status: "indicative, under consultation", act: "Portaria MME nº 942/2026",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+      - {year: 2029, ghg_reduction_pct: 4.0, status: "indicative, under consultation", act: "Portaria MME nº 942/2026",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+      - {year: 2030, ghg_reduction_pct: 5.0, status: "indicative, under consultation", act: "Portaria MME nº 942/2026",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+    # no official target for 2035 (none drawn)
+    # stock: N1 of the crop residues within these radii of the pair's operating plants (theoretical methane, N1 only)
+    stock:
+      - {pair: "all_crops|biomethane", radii_km: [30, 100]}
+      - {pair: "all_crops|biogas", radii_km: [30]}

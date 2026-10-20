@@ -29,6 +29,7 @@ TABLES = [
     "plants", "plants_biomethane_snapshots", "plants_register_match",
     "reach_units", "reach_hist", "reach_distance", "reach_competition", "reach_mills", "reach_aggregation_check",
     "reach_scale",
+    "demo_typology", "demo_typology_k", "demo_mandate_targets", "demo_mandate_stock",
 ]
 
 

@@ -50,6 +50,10 @@ TABLE_TITLES = {
     "reach_mills": "Sugarcane mills: cane within each radius, required radius, supply ratio, contested cane",
     "reach_aggregation_check": "Share within reach from 30 m pixels vs from ~480 m cells",
     "reach_scale": "Share within reach by radius at the pixel, the municipality and the region, per rule (MAUP)",
+    "demo_typology": "Intermediate regions: crop composition type (CLR, Ward), share within reach, plants, N1, priority",
+    "demo_typology_k": "Typology: silhouette, Calinski-Harabasz and Ward/k-means agreement per number of types",
+    "demo_mandate_targets": "Biomethane mandate targets and their volumes (official or derived), with the acts",
+    "demo_mandate_stock": "N1 of crop residues within reach of existing biomethane and biogas plants (stock)",
 }
 
 
