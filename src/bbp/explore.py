@@ -73,12 +73,12 @@ def register(key: str, name: str):
 # context loaded once
 # ---------------------------------------------------------------------------
 class Ctx:
-    def __init__(self, cfg: Config, ck: CheckLog):
+    def __init__(self, cfg: Config, ck: CheckLog, data=None):
         from bbp.figures import _Data, landcover_display
         from bbp.plants import load_plants
 
         self.cfg, self.ck = cfg, ck
-        self.data = _Data(cfg, ck)
+        self.data = data if data is not None else _Data(cfg, ck)
         self.g, self.states, self.country, self.ext = self.data.base()
         self.year = int((cfg.section("paper").get("fig1") or {}).get("year", cfg.years[-1]))
         self.disp = landcover_display(cfg, ck, self.year, required=False)
@@ -216,7 +216,7 @@ SUBTYPE_LABEL = {"agriculture": "Agro-livestock", "industry": "Industry", "urban
 
 
 @register("x01", "x01_plants_by_family")
-def x01_plants(ctx: Ctx):
+def x01_plants(ctx: Ctx, host=None, start: int = 0):
     from bbp.figures import nice_scale
 
     if ctx.plants is None:
@@ -229,7 +229,7 @@ def x01_plants(ctx: Ctx):
     MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
     TT, LG = 4.2, 4 * fs.ROW + 1.6
     FH = 2 * (MH + TT + LG) + 9.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     for i, (fam, title, focus, override, ref, subs) in enumerate(X01_PANELS):
         col, row = i % ncol, i // ncol
         x = 1.0 + col * (w + gap) + (w - MW) / 2
@@ -245,7 +245,7 @@ def x01_plants(ctx: Ctx):
         else:
             plant_points(a, df, sizes)
         n_op = int(df["operating"].fillna(True).astype(bool).sum())
-        panel_title(cv, x, y + MH + 0.4, f"({letter(i)}) {title}")
+        panel_title(cv, x, y + MH + 0.4, f"({letter(start + i)}) {title}")
         # legend under the map, in two columns
         lab = {"sugarcane": "Sugarcane", "soy_corn2": "Soy + 2nd-season corn", "soybean": "Soybean, all seasons",
                "pasture": "Pasture", "plantation": "Forest plantation"}
@@ -263,7 +263,7 @@ def x01_plants(ctx: Ctx):
         flow_legend(cv, x, y - 1.6, MW, entries)
         cv.text(x + MW - 0.5, y + MH - 0.5, f"{len(df)} plants\n{n_op} operating", fontsize=fs.FS_ITEM - 0.3,
                 ha="right", va="top", color=fs.MUTED, linespacing=1.2)
-        cv.panel(f"{letter(i)}_{fam}", x, y - LG + 0.4, x + MW, y + MH + TT - 0.3)
+        cv.panel(f"{letter(start + i)}_{fam}", x, y - LG + 0.4, x + MW, y + MH + TT - 0.3)
     # strip: plant symbols, scale, credits
     y0 = 0.4
     cv.north(4.0, y0 + 3.4)
@@ -291,7 +291,7 @@ RADIUS_COLORS = ["#08306b", "#2f7fbf", "#8cc2e0", "#f4a259", "#c1121f"]
 
 
 @register("x02", "x02_sp_mills_catchments")
-def x02_sp_mills(ctx: Ctx):
+def x02_sp_mills(ctx: Ctx, host=None):
     import geopandas as gpd
 
     from bbp.figures import nice_scale
@@ -311,7 +311,7 @@ def x02_sp_mills(ctx: Ctx):
     TT = 4.2
     LEG = 17.0
     FH = MH + TT + LEG
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     m = gpd.GeoDataFrame(mills, geometry=gpd.points_from_xy(mills["lon"], mills["lat"]), crs="EPSG:4674")
     m = m.to_crs(MAP_CRS)
     m["x"], m["y"] = m.geometry.x, m.geometry.y
@@ -369,7 +369,7 @@ def x02_sp_mills(ctx: Ctx):
             linespacing=1.25)
     cv.scale(1.0, 1.4, S, seg_km=100, n=1, bh=0.6, compact=True)
     cv.text(22.0, 0.8, f"1:{S * 1000:,.0f}. Great-circle distance from each mill to every 30 m cane pixel "
-            "(all states). Data: ANP; MapBiomas Col. 11. NIPE/Unicamp",
+            "(all states). Data: ANP; MapBiomas Col. 11. CP2b NIPE/Unicamp",
             fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom")
     cv.panel("legend", 0.5, 0.0, FW - 0.5, LEG - 0.5)
     ctx.ck.add("x02_sp", True, f"{len(in_sp)} SP mills; median required radius {med:.1f} km", med)
@@ -383,13 +383,13 @@ COMP_COLORS = ["#d9d9d9", "#c7e9c0", "#74c476", "#31a354", "#006d2c", "#00441b",
 
 
 @register("x03", "x03_mill_catchments")
-def x03_mill_catchments(ctx: Ctx):
+def x03_mill_catchments(ctx: Ctx, host=None):
     mills, comp = ctx.t("mills"), ctx.t("competition")
     if mills is None:
         return None
     yield_t = ctx.cfg.section("plants")["reach"].get("cane_yield_t_ha", 75)
     FW, FH = fs.FULL_W, 108.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     W, H = 52.0, 32.0
     X = (12.0, 12.0 + W + 15.0)
     Y = (FH - 5.5 - H, FH - 5.5 - H - 23.0 - H)
@@ -468,6 +468,7 @@ def x03_mill_catchments(ctx: Ctx):
     d = cv.ax(X[1], Y[1], W, H)
     if comp is not None and len(comp):
         cp = comp[comp["pair"] == "sugarcane|sugarcane_mill"]
+        cp = cp.assign(n_plants=cp["n_plants"].clip(upper=6))           # 6 or more mills in one class
         tab = cp.pivot_table(index="radius_km", columns="n_plants", values="area_ha", aggfunc="sum").fillna(0)
         tab = tab.div(tab.sum(axis=1), axis=0)
         bottom = np.zeros(len(tab))
@@ -504,12 +505,12 @@ X04_PAIRS = ["sugarcane|sugarcane_mill", "sugarcane|biomass_power|bagasse", "cor
 
 
 @register("x04", "x04_distance_to_plants")
-def x04_distance(ctx: Ctx):
+def x04_distance(ctx: Ctx, host=None, start: int = 0):
     dist = ctx.t("distance")
     if dist is None:
         return None
     FW, FH = fs.FULL_W, 62.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = cv.ax(11.0, 9.5, 50.0, FH - 16.0)
     ends = []
     shares = {}
@@ -535,7 +536,7 @@ def x04_distance(ctx: Ctx):
     a.set_ylabel("Share of the crop area (cumulative)")
     axis_style(a)
     a.grid(axis="x", color=fs.FAINT, lw=0.4)
-    cv.text(1.0, FH - 1.0, "(a) Crop area by distance to the nearest plant", fontsize=fs.FS_LABEL,
+    cv.text(1.0, FH - 1.0, f"({letter(start)}) Crop area by distance to the nearest plant", fontsize=fs.FS_LABEL,
             fontweight="bold", va="top")
     # (b) heat table
     from matplotlib import colormaps
@@ -556,15 +557,15 @@ def x04_distance(ctx: Ctx):
             cv.ov.add_patch(Rectangle((tx + j * cw, yy), cw - 0.4, rh - 0.4, fc=cmap(0.1 + 0.8 * v), ec="none"))
             cv.text(tx + j * cw + cw / 2 - 0.2, yy + rh / 2 - 0.2, f"{100 * v:.0f}", ha="center", va="center",
                     fontsize=fs.FS_ITEM, color="white" if v > 0.55 else fs.INK)
-    cv.text(tx - 31.5, FH - 1.0, "(b) Share within the radius (%)", fontsize=fs.FS_LABEL, fontweight="bold",
+    cv.text(tx - 31.5, FH - 1.0, f"({letter(start + 1)}) Share within the radius (%)", fontsize=fs.FS_LABEL, fontweight="bold",
             va="top")
     for e in ends:
         a.plot([e[1]], [e[2]], marker="o", ms=2.0, color=e[3], mec="white", mew=0.2, clip_on=False)
-    cv.text(1.0, 0.8, f"Crop pixels: MapBiomas Col. 11 {ctx.year}, 30 m (2nd-season corn: second-crop layer). Plants operating "
-            "(ANP, CIBiogás, ANEEL, MAPA). Great-circle distance: road distances are longer.", fontsize=fs.FS_CRED,
-            color=fs.MUTED, va="bottom")
-    cv.panel("a_cdf", 0.5, 7.5, 64.0, FH - 0.3)
-    cv.panel("b_table", 65.5, 7.5, FW - 0.5, FH - 0.3)
+    cv.text(tx - 31.5, 8.0, f"Crop pixels: MapBiomas Col. 11 {ctx.year}, 30 m (2nd-season corn:\nsecond-crop "
+            "layer). Plants operating (ANP, CIBiogás, ANEEL,\nMAPA). Great-circle distance: road distances are longer.",
+            fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom", linespacing=1.3)
+    cv.panel(f"{letter(start)}_cdf", 0.5, 0.0, 64.0, FH - 0.3)
+    cv.panel(f"{letter(start + 1)}_table", 65.5, 0.0, FW - 0.5, FH - 0.3)
     for pair, v in shares.items():
         ctx.ck.add(f"x04_{pair}_30km", True, f"{v[2]:.1%} within 30 km, {v[3]:.1%} within 50 km", v[2])
     return cv
@@ -579,7 +580,7 @@ X05_RULE = "area_fraction"           # bbp.scale: the main rule (centroid and re
 
 
 @register("x05", "x05_maup_access")
-def x05_maup(ctx: Ctx):
+def x05_maup(ctx: Ctx, host=None):
     sc = ctx.t("scale")
     if sc is None:
         return None
@@ -589,7 +590,7 @@ def x05_maup(ctx: Ctx):
     FW = fs.FULL_W
     ncol, w, h, gx, gy = 3, 32.0, 26.0, 11.0, 13.0
     FH = 2 * (h + gy) + 11.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     x0 = 11.0
     for i, pair in enumerate(X05_PAIRS):
         t = maup[maup["pair"] == pair]
@@ -607,8 +608,8 @@ def x05_maup(ctx: Ctx):
         if hi - lo >= 0.03:
             a.annotate("", (30, hi), (30, lo), arrowprops={"arrowstyle": "<->", "lw": 0.5, "color": fs.DETAIL,
                                                              "shrinkA": 0, "shrinkB": 0})
-            a.text(32, (lo + hi) / 2, f"{100 * (hi - lo):.0f} pp", color=fs.DETAIL, fontsize=fs.FS_TEXT - 0.5,
-                   va="center")
+            a.text(33, (lo + hi) / 2, f"{100 * (hi - lo):.0f} pp", color=fs.DETAIL, fontsize=fs.FS_TEXT - 0.5,
+                   va="center", zorder=6, bbox={"fc": "white", "ec": "none", "pad": 0.6, "alpha": 0.9})
         elif len(s30):
             a.text(0.97, 0.94, "at 30 km all levels agree within 3 pp", transform=a.transAxes, ha="right", va="top",
                    fontsize=fs.FS_TEXT - 1.0, color=fs.MUTED)
@@ -647,7 +648,7 @@ SHARE_LABELS = ["< 10 %", "10–25 %", "25–50 %", "50–75 %", "75–90 %", "�
 
 
 @register("x06", "x06_regions_within_reach")
-def x06_regions(ctx: Ctx):
+def x06_regions(ctx: Ctx, host=None):
     from matplotlib import colormaps
 
     from bbp.figures import nice_scale
@@ -663,7 +664,7 @@ def x06_regions(ctx: Ctx):
     MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
     TT, LEG = 4.4, 14.5
     FH = 2 * (MH + TT) + LEG
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     cmap = colormaps["YlGnBu"]
     colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
     min_ha = 5_000.0
@@ -729,48 +730,104 @@ TYPE_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#9c755f", "#76b7b2",
 MINOR = "#e6e6e6"
 
 
+SHARE_COL = "within_30km__all_crops__biogas"
+TYPOLOGY_CREDIT = ("133 intermediate regions (IBGE 2017); MapBiomas Col. 11 2024 crop area, 30 m reach; N1 observed "
+                   "variant, CP2b ref factors.\nMarker area: biogas plants in the region. ")
+
+
+def _typology(ctx: Ctx) -> dict | None:
+    """The demo typology with what its panels share: colours, type names, priority regions in rank order."""
+    ty = ctx.d("typology")
+    if ty is None:
+        return None
+    ty = ty.set_index("cd_rgint")
+    names = ty[ty["cluster"] > 0].groupby("cluster")["cluster_name"].first()
+    col = {int(k): TYPE_COLORS[(int(k) - 1) % len(TYPE_COLORS)] for k in names.index}
+    col[0] = MINOR
+    t = ty[ty["cluster"] > 0]
+    pr = t[t["priority"]].sort_values("n1_ref_nm3", ascending=False)
+    return {"ty": ty, "names": names, "col": col, "t": t, "pr": pr}
+
+
+def _types_map(ctx: Ctx, cv: Canvas, x: float, y0: float, S: float, d: dict, title: str, panel: str):
+    rg, ext = ctx.regions(), ctx.ext
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    a = cv.map_ax(x, y0, ext, S)
+    m = rg.assign(cluster=rg["cd_rgint"].map(d["ty"]["cluster"]).fillna(0).astype(int))
+    m.plot(ax=a, color=[d["col"][c] for c in m["cluster"]], linewidth=0, zorder=1)
+    rg.boundary.plot(ax=a, color="white", linewidth=0.18, zorder=2)
+    ctx.states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.28, zorder=3)
+    ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+    map_frame(a, ext)
+    panel_title(cv, x, y0 + MH + 0.4, title)
+    cv.panel(panel, x, y0, x + MW, y0 + MH + 4.2)
+
+
+def _reach_scatter(c, d: dict, compact: bool = False):
+    """N1 of each region against its crop share within 30 km of a biogas plant; priorities ringed and numbered."""
+    t, pr = d["t"], d["pr"]
+    n = t["plants__biogas"].fillna(0)
+    for k in d["names"].index:
+        s = t[t["cluster"] == k]
+        c.scatter(s["n1_ref_nm3"] / 1e9, s[SHARE_COL], s=3.0 + 2.2 * np.sqrt(n.loc[s.index]), c=d["col"][int(k)],
+                  alpha=0.9, edgecolors="white", linewidths=0.3, zorder=3)
+    c.set_xscale("log")
+    c.set_ylim(-0.03, 1.03)
+    c.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    c.axvline(t["n1_ref_nm3"].quantile(0.75) / 1e9, color=fs.HAIR, lw=0.5, zorder=1)
+    c.axhline(0.25, color=fs.HAIR, lw=0.5, zorder=1)
+    for j, (_, r) in enumerate(pr.iterrows(), start=1):
+        c.scatter(r["n1_ref_nm3"] / 1e9, r[SHARE_COL], s=16, facecolors="none", edgecolors=fs.INK, linewidths=0.5,
+                  zorder=4)
+        c.annotate(str(j), (r["n1_ref_nm3"] / 1e9, r[SHARE_COL]), xytext=(2.5, 2.5 + 3.2 * (j % 3)),
+                   textcoords="offset points", fontsize=fs.FS_TEXT - 1.8, color=fs.INK, zorder=5)
+    c.set_xlim(left=0.01)
+    c.text(0.99, 0.97, "priority: top quartile of N1,\n< 25 % within 30 km", transform=c.transAxes, ha="right",
+           va="top", fontsize=fs.FS_TEXT - 1.0, color=fs.DETAIL, style="italic")
+    c.set_xlabel("N1 of the crop residues (billion Nm³ CH4/yr, log)" if compact else
+                 "N1 of the region's crop residues (billion Nm³ CH4/yr, log)")
+    c.set_ylabel("Within 30 km of a biogas plant")
+    axis_style(c)
+
+
+def _type_rows(d: dict) -> list:
+    rows = [("patch", {"fc": d["col"][int(k)], "ec": "#7a7a7a"}, f"{int(k)}. {v}") for k, v in d["names"].items()]
+    rows.append(("patch", {"fc": MINOR, "ec": "#7a7a7a"}, "minor agriculture"))
+    return rows
+
+
+def _priority_lines(d: dict) -> list[str]:
+    return [f"{j}. {r.nm_rgint} ({r.uf})" for j, r in enumerate(d["pr"].itertuples(), start=1)]
+
+
 @register("x07", "x07_region_typology")
-def x07_typology(ctx: Ctx):
+def x07_typology(ctx: Ctx, host=None):
     """Typology of the intermediate regions (bbp demo): (a) types from the CLR crop composition, (b) share of all
     crops within 30 km of a biogas plant, (c) N1 against that share, plants as marker size, priorities named."""
     from matplotlib import colormaps
 
     from bbp.figures import nice_scale
 
-    ty = ctx.d("typology")
-    if ty is None:
+    d = _typology(ctx)
+    if d is None:
         return None
-    rg = ctx.regions()
-    ext = ctx.ext
+    rg, ext, ty = ctx.regions(), ctx.ext, d["ty"]
     FW, gap = fs.FULL_W, 3.0
     w = (FW - 2.0 - gap) / 2
     S = nice_scale((ext[1] - ext[0]) / w)
     MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
     TT, SCH, LEG = 4.4, 46.0, 12.0
     FH = MH + TT + SCH + 14.0 + LEG
-    cv = Canvas(FW, FH)
-    ty = ty.set_index("cd_rgint")
-    names = ty[ty["cluster"] > 0].groupby("cluster")["cluster_name"].first()
-    col = {int(k): TYPE_COLORS[(int(k) - 1) % len(TYPE_COLORS)] for k in names.index}
-    col[0] = MINOR
-    share_col = "within_30km__all_crops__biogas"
+    cv = fs.canvas(FW, FH, host)
     # (a) types
     y0 = FH - MH - TT + 0.2
-    a = cv.map_ax(1.0, y0, ext, S)
-    m = rg.assign(cluster=rg["cd_rgint"].map(ty["cluster"]).fillna(0).astype(int))
-    m.plot(ax=a, color=[col[c] for c in m["cluster"]], linewidth=0, zorder=1)
-    rg.boundary.plot(ax=a, color="white", linewidth=0.18, zorder=2)
-    ctx.states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.28, zorder=3)
-    ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
-    map_frame(a, ext)
-    panel_title(cv, 1.0, y0 + MH + 0.4, "(a) Types of crop composition (CLR, Ward)")
-    cv.panel("a_types", 1.0, y0, 1.0 + MW, y0 + MH + TT - 0.2)
+    _types_map(ctx, cv, 1.0, y0, S, d, "(a) Types of crop composition (CLR, Ward)", "a_types")
     # (b) share within reach
     x1 = 1.0 + w + gap
     b = cv.map_ax(x1, y0, ext, S)
     cmap = colormaps["YlGnBu"]
     colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
-    mb = rg.assign(share=rg["cd_rgint"].map(ty[share_col]), minor=rg["cd_rgint"].map(ty["cluster"]).fillna(0) == 0)
+    mb = rg.assign(share=rg["cd_rgint"].map(ty[SHARE_COL]), minor=rg["cd_rgint"].map(ty["cluster"]).fillna(0) == 0)
     mb[mb["minor"]].plot(ax=b, color="#f3f3f3", linewidth=0, zorder=1)
     cls = np.digitize(mb.loc[~mb["minor"], "share"].fillna(0), SHARE_EDGES[1:-1])
     mb.loc[~mb["minor"]].plot(ax=b, color=[colors[k] for k in cls], linewidth=0, zorder=1.2)
@@ -786,47 +843,64 @@ def x07_typology(ctx: Ctx):
     # (c) N1 vs share within reach
     ys = LEG + 9.0
     c = cv.ax(12.0, ys, 74.0, SCH)
-    t = ty[ty["cluster"] > 0]
-    n = t["plants__biogas"].fillna(0)
-    for k in names.index:
-        s = t[t["cluster"] == k]
-        c.scatter(s["n1_ref_nm3"] / 1e9, s[share_col], s=3.0 + 2.2 * np.sqrt(n.loc[s.index]), c=col[int(k)],
-                  alpha=0.9, edgecolors="white", linewidths=0.3, zorder=3)
-    c.set_xscale("log")
-    c.set_ylim(-0.03, 1.03)
-    c.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
-    thr = t["n1_ref_nm3"].quantile(0.75) / 1e9
-    c.axvline(thr, color=fs.HAIR, lw=0.5, zorder=1)
-    c.axhline(0.25, color=fs.HAIR, lw=0.5, zorder=1)
-    pr = t[t["priority"]].sort_values("n1_ref_nm3", ascending=False)
-    for j, (_, r) in enumerate(pr.iterrows(), start=1):
-        c.scatter(r["n1_ref_nm3"] / 1e9, r[share_col], s=16, facecolors="none", edgecolors=fs.INK, linewidths=0.5,
-                  zorder=4)
-        c.annotate(str(j), (r["n1_ref_nm3"] / 1e9, r[share_col]), xytext=(2.5, 2.5 + 3.2 * (j % 3)),
-                   textcoords="offset points", fontsize=fs.FS_TEXT - 1.8, color=fs.INK, zorder=5)
-    c.set_xlim(left=0.01)
-    c.text(0.99, 0.97, "priority: top quartile of N1,\n< 25 % within 30 km", transform=c.transAxes, ha="right",
-           va="top", fontsize=fs.FS_TEXT - 1.0, color=fs.DETAIL, style="italic")
-    c.set_xlabel("N1 of the region's crop residues (billion Nm³ CH4/yr, log)")
-    c.set_ylabel("Within 30 km of a biogas plant")
-    axis_style(c)
+    _reach_scatter(c, d)
     panel_title(cv, 2.0, ys + SCH + 2.0, "(c) Residue against reach")
     cv.panel("c_n1_vs_reach", 0.5, ys - 9.0, 88.0, ys + SCH + 6.0)
-    # legend: types, shares
-    rows = [("patch", {"fc": col[int(k)], "ec": "#7a7a7a"}, f"{int(k)}. {v}") for k, v in names.items()]
-    rows.append(("patch", {"fc": MINOR, "ec": "#7a7a7a"}, "minor agriculture"))
+    # legend: types, shares, priorities
+    rows = _type_rows(d)
     cv.legend(91.0, ys + SCH, [("Type (a, c)", rows)], header=None)
     srows = [("patch", {"fc": cc, "ec": "#7a7a7a"}, lab) for cc, lab in zip(colors, SHARE_LABELS, strict=True)]
     cv.legend(91.0, ys + SCH - (len(rows) + 2) * fs.ROW, [("Within 30 km (b)", srows)], header=None)
-    listing = "\n".join(f"{j}. {r.nm_rgint} ({r.uf})" for j, r in enumerate(pr.itertuples(), start=1))
-    cv.text(91.0, ys + SCH - (len(rows) + len(srows) + 5) * fs.ROW, "Priority regions (c):\n" + listing,
-            fontsize=fs.FS_ITEM - 0.6, va="top", linespacing=1.25)
-    cv.text(1.0, 0.6, "133 intermediate regions (IBGE 2017); MapBiomas Col. 11 2024 crop area, 30 m reach; N1 observed "
-            "variant, CP2b ref factors.\nMarker area: biogas plants in the region. " + fs.CREDIT_CARTO,
-            fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, va="bottom", linespacing=1.3)
+    cv.text(91.0, ys + SCH - (len(rows) + len(srows) + 5) * fs.ROW,
+            "Priority regions (c):\n" + "\n".join(_priority_lines(d)), fontsize=fs.FS_ITEM - 0.6, va="top",
+            linespacing=1.25)
+    cv.text(1.0, 0.6, TYPOLOGY_CREDIT + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, va="bottom",
+            linespacing=1.3)
     cv.panel("legend", 89.0, ys - 9.0, FW - 0.5, ys + SCH + 6.0)
-    ctx.ck.add("x07_types", True, f"{len(names)} types; {int(t['priority'].sum())} priority regions",
-               int(t["priority"].sum()))
+    ctx.ck.add("x07_types", True, f"{len(d['names'])} types; {len(d['pr'])} priority regions", len(d["pr"]))
+    return cv
+
+
+def typology_mandate(ctx: Ctx, host=None):
+    """Paper Fig 9 (conclusion 5): (a) types map, (b) N1 against the share within reach with the priorities,
+    (c) the mandate ruler (x08c) underneath."""
+    from bbp.figures import nice_scale
+
+    d = _typology(ctx)
+    if d is None or ctx.d("mandate_targets") is None:
+        return None
+    RH = X08C_H
+    ext = ctx.ext
+    FW, gap = fs.FULL_W, 4.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT = 4.4
+    rows = _type_rows(d)
+    pl = _priority_lines(d)
+    half = (len(pl) + 1) // 2
+    LEG = (max(len(rows), half) + 1) * fs.ROW + 0.8
+    CR = 6.0
+    top = MH + TT + LEG + CR
+    FH = top + 2.0 + RH
+    cv = fs.canvas(FW, FH, host)
+    y0 = FH - MH - TT + 0.2
+    _types_map(ctx, cv, 1.0, y0, S, d, "(a) Types of crop composition (CLR, Ward)", "a_types")
+    x1 = 1.0 + MW + gap + 9.0
+    c = cv.ax(x1, y0 + 8.0, FW - x1 - 1.5, MH - 9.0)
+    _reach_scatter(c, d, compact=True)
+    panel_title(cv, x1 - 9.0, y0 + MH + 0.4, "(b) Residue against reach")
+    cv.panel("b_n1_vs_reach", x1 - 9.5, y0, FW - 0.5, y0 + MH + 4.2)
+    ly = y0 - 1.5
+    cv.legend(1.0, ly, [("Type", rows)], header=None)
+    px = 1.0 + MW + gap
+    cv.text(px, ly, "Priority regions (b)", fontsize=fs.FS_TITLE, va="top")
+    for k, chunk in enumerate((pl[:half], pl[half:])):
+        cv.text(px + k * 33.0, ly - 3.2, "\n".join(chunk), fontsize=fs.FS_ITEM - 0.4, va="top", linespacing=1.3)
+    cv.text(1.0, RH + 2.0 + 0.4, TYPOLOGY_CREDIT + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED,
+            va="bottom", linespacing=1.3)
+    cv.panel("legend", 0.5, RH + 2.0, FW - 0.5, y0 - 0.5)
+    x08c_mandate(ctx, host=lambda fw_, fh_: fs.SubCanvas(cv, 0.0, 0.0, fw_, fh_, prefix="c_"), start=2)
     return cv
 
 
@@ -834,7 +908,7 @@ def x07_typology(ctx: Ctx):
 # x08 — registers compared; biomethane plants against the mandate
 # ---------------------------------------------------------------------------
 @register("x08", "x08_registers_biomethane")
-def x08_registers(ctx: Ctx):
+def x08_registers(ctx: Ctx, host=None):
 
     from bbp.plants import read_conab_mills, read_epe_mills
     from bbp.reach import haversine_km
@@ -851,8 +925,8 @@ def x08_registers(ctx: Ctx):
         regs["CONAB 2025 (active)"] = read_conab_mills(cx["conab"])
     if cx.get("epe") and cx["epe"].exists():
         regs["MapBiomas / EPE 2018"] = read_epe_mills(cx["epe"])
-    FW, FH = fs.FULL_W, 70.0
-    cv = Canvas(FW, FH)
+    FW, FH = fs.FULL_W, X08C_H
+    cv = fs.canvas(FW, FH, host)
     # (a) mills per state, three registers
     a = cv.ax(10.0, 13.0, 36.0, FH - 20.0)
     ufcol = {k: ("UF" if "UF" in g else "uf") for k, g in regs.items()}
@@ -923,8 +997,8 @@ def x08_registers(ctx: Ctx):
             va="top")
     cv.panel("c_biomethane", 85.0, 2.0, FW - 0.5, FH - 0.3)
     cv.text(1.0, 0.6, "Data: ANP ethanol plants; ANP biomethane open data (capacity and production, snapshot set in "
-            "pipeline.yaml); CONAB 2025;\nMapBiomas infrastructure (EPE webmap 2018). The mandate ruler is drawn "
-            "separately (Phase 3).", fontsize=fs.FS_CRED,
+            "pipeline.yaml); CONAB 2025;\nMapBiomas infrastructure (EPE webmap 2018). The mandate ruler: Fig 9c "
+            "of the paper.", fontsize=fs.FS_CRED,
             color=fs.MUTED, va="bottom", linespacing=1.3)
     for k, s2, s10 in lab_b:
         ctx.ck.add(f"x08_match_{k.split(' ')[0]}", True, f"{s2:.1%} of ANP mills within 2 km, {s10:.1%} within 10 km",
@@ -935,8 +1009,11 @@ def x08_registers(ctx: Ctx):
 # ---------------------------------------------------------------------------
 # x08c — the biomethane mandate ruler
 # ---------------------------------------------------------------------------
+X08C_H = 70.0                        # mm, also the bottom row of the paper Fig 9
+
+
 @register("x08c", "x08c_mandate_ruler")
-def x08c_mandate(ctx: Ctx):
+def x08c_mandate(ctx: Ctx, host=None, start: int | None = None):
     """Biomethane mandate ruler (bbp demo): targets (official volumes; indicative ones hatched), ANP capacity and
     production (flows, lines), N1 within reach of existing biomethane plants (stock, shaded band at the back)."""
     tg, st = ctx.d("mandate_targets"), ctx.d("mandate_stock")
@@ -946,7 +1023,7 @@ def x08c_mandate(ctx: Ctx):
     sn = pd.read_parquet(snaps)
     cur = sn.iloc[-1]
     FW, FH = fs.FULL_W, 70.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = cv.ax(14.0, 16.0, 78.0, FH - 24.0)
     yrs = tg["year"].to_numpy()
     x0, x1 = yrs.min() - 0.6, yrs.max() + 0.6
@@ -978,7 +1055,8 @@ def x08c_mandate(ctx: Ctx):
     a.set_xticks(yrs)
     a.set_ylabel("Million m³ per day")
     axis_style(a)
-    cv.text(1.0, FH - 1.0, "Biomethane mandate: targets, flows and the stock within reach", fontsize=fs.FS_LABEL,
+    head = "Biomethane mandate: targets, flows and the stock within reach"
+    cv.text(1.0, FH - 1.0, head if start is None else f"({letter(start)}) {head}", fontsize=fs.FS_LABEL,
             fontweight="bold", va="top")
     rows = [("patch", {"fc": "#1a1a1a", "ec": "#1a1a1a"}, "target, official volume"),
             ("patch", {"fc": "white", "ec": "#1a1a1a", "hatch": "////"}, "indicative, under consultation"),

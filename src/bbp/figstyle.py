@@ -46,7 +46,7 @@ FAINT = "#ececec"
 DETAIL = "#c1121f"
 DETAIL_LS = (0, (2, 1.2))
 CREDIT_PROJ = "Projection: SIRGAS 2000 / Brazil Polyconic (EPSG:5880)"
-CREDIT_CARTO = "Cartography: NIPE/Unicamp"
+CREDIT_CARTO = "Cartography: CP2b NIPE/Unicamp"
 
 CROP_COLORS = {"soybean": "#0173b2", "corn_2nd": "#e69f00", "sugarcane": "#029e73", "coffee": "#d55e00",
                "citrus": "#ece133", "cotton": "#56b4e9", "rice": "#cc78a7", "corn_1st": "#9a9a9a"}
@@ -58,14 +58,16 @@ CROP_SHORT = {"soybean": "Soybean", "corn_2nd": "Corn (2nd season)", "sugarcane"
 PERENNIAL = {"sugarcane", "coffee", "citrus"}
 DECLARED_COLOR = MUTED
 
-# Land-cover display groups (bbp.landcover): the paper crops in their crop colours, saturated; everything
-# else in light neutrals, so the crops carry the map. Soybean followed by a 2nd-season crop takes the colour
-# of that crop (corn orange, cotton blue): the field holds two residues a year.
+# Land-cover display groups (bbp.landcover): the paper crops in their crop colours, saturated; natural
+# vegetation, pasture and forest plantation in the MapBiomas Collection 11 legend colours (forest formation,
+# pasture, forest plantation: legend_code_mapbiomas_brazil_collection_11.csv); water and built-up stay light,
+# since the MapBiomas blue and red would read as soybean and coffee. Soybean followed by a 2nd-season crop
+# takes the colour of that crop (corn orange, cotton blue): the field holds two residues a year.
 LANDCOVER_COLORS = {
     "soybean": CROP_COLORS["soybean"], "soy_corn2": CROP_COLORS["corn_2nd"], "soy_cotton2": CROP_COLORS["cotton"],
     "sugarcane": CROP_COLORS["sugarcane"], "coffee": CROP_COLORS["coffee"], "citrus": CROP_COLORS["citrus"],
     "cotton": CROP_COLORS["cotton"], "rice": CROP_COLORS["rice"],
-    "other_crops": "#c2b394", "pasture": "#efe7d2", "plantation": "#d4cdb8", "natural": "#e1e7db",
+    "other_crops": "#c2b394", "pasture": "#edde8e", "plantation": "#7a5900", "natural": "#7dc975",
     "water": "#c8dae6", "built": "#bdbdbd",
 }
 LANDCOVER_LEGEND = [            # (display groups drawn with one swatch, label); soybean + cotton shares cotton's
@@ -170,6 +172,64 @@ def direct_labels(ax, ends: list[tuple[str, float, float, str]], x_pad: float = 
 # ---------------------------------------------------------------------------
 # the millimetre canvas
 # ---------------------------------------------------------------------------
+def canvas(fw: float, fh: float, host=None):
+    """A Canvas of fw × fh mm, or, with `host` (a callable (fw, fh) -> Canvas), whatever the host gives: a figure
+    function written with `cv = canvas(FW, FH, host)` can be drawn alone or inside a composite figure."""
+    return host(fw, fh) if host is not None else Canvas(fw, fh)
+
+
+HEAD_H = 4.5          # mm: panel title above a stacked part
+
+
+class Stack:
+    """Composite figures from figure functions drawn one under the other, still vector.
+
+        st = Stack(gap=4.0)
+        st.add("a", lambda host: x04(ctx, host=host))
+        st.add("b", lambda host: x01(ctx, host=host))
+        cv = st.draw()        # one Canvas: each part drawn at its own size, in order from the top
+
+    Each part is drawn twice: once alone to measure it (then discarded), once in its place."""
+
+    def __init__(self, gap: float = 3.0, ck=None):
+        self.gap, self.ck = gap, ck           # ck: checks the measuring pass adds are dropped (drawn twice)
+        self.parts: list[tuple[str, object]] = []
+
+    def add(self, prefix: str, draw, head: str | None = None):
+        """`head`: a panel title drawn above the part (for parts that have no letter of their own)."""
+        self.parts.append((prefix, draw, head))
+
+    def draw(self):
+        import matplotlib.pyplot as plt
+
+        sizes = []
+        for _, draw, _ in self.parts:
+            n = len(self.ck.checks) if self.ck is not None else 0
+            cv = draw(None)
+            if self.ck is not None:
+                del self.ck.checks[n:]
+            if cv is None:
+                sizes.append(None)
+                continue
+            sizes.append((cv.fw, cv.fh))
+            plt.close(cv.fig)
+        kept = [(p, d, hd, s) for (p, d, hd), s in zip(self.parts, sizes, strict=True) if s is not None]
+        if not kept:
+            return None
+        fw = max(s[0] for *_, s in kept)
+        fh = sum(s[1] + (HEAD_H if hd else 0.0) for _, _, hd, s in kept) + self.gap * (len(kept) - 1)
+        root = Canvas(fw, fh)
+        y = fh
+        for prefix, draw, hd, (_, h) in kept:
+            if hd:
+                root.text(1.0, y - 0.4, hd, fontsize=FS_LABEL, fontweight="bold", va="top")
+                y -= HEAD_H
+            y -= h
+            draw(lambda fw_, fh_, _y=y, _p=prefix: SubCanvas(root, 0.0, _y, fw_, fh_, prefix=f"{_p}_"))
+            y -= self.gap
+        return root
+
+
 class Canvas:
     """A figure of FW × FH mm; `ax()` places axes in mm, `ov` is an overlay axis in mm."""
 
@@ -424,3 +484,31 @@ def simulate(png: Path, out_dir: Path, max_px: int = 1600) -> list[Path]:
     dpath = out_dir / f"{png.stem}_deutan.png"
     Image.fromarray(deut).save(dpath)
     return [grey, dpath]
+
+
+class SubCanvas(Canvas):
+    """A region of another Canvas (x, y, fw × fh mm) with the Canvas API in local millimetres: axes are placed
+    with the offset, the overlay is an axis of its own over the region, panels are registered on the root with
+    `prefix`. Saving goes through the root."""
+
+    def __init__(self, parent: Canvas, x: float, y: float, fw: float, fh: float, prefix: str = ""):
+        self.root = getattr(parent, "root", parent)
+        ox, oy = getattr(parent, "ox", 0.0), getattr(parent, "oy", 0.0)
+        self.ox, self.oy = ox + x, oy + y
+        self.fw, self.fh = float(fw), float(fh)
+        self.fig = self.root.fig
+        self.prefix = prefix
+        self.panels, self._hide, self._connectors = self.root.panels, self.root._hide, self.root._connectors
+        self.ov = self.root.ax(self.ox, self.oy, self.fw, self.fh, z=10)
+        self.ov.set_xlim(0, self.fw)
+        self.ov.set_ylim(0, self.fh)
+        self.ov.axis("off")
+
+    def ax(self, x: float, y: float, w: float, h: float, z: float = 1, transparent: bool = True):
+        return self.root.ax(x + self.ox, y + self.oy, w, h, z=z, transparent=transparent)
+
+    def panel(self, name: str, x0: float, y0: float, x1: float, y1: float, pad: float = 0.6, hide=()):
+        self.root.panel(self.prefix + name, x0 + self.ox, y0 + self.oy, x1 + self.ox, y1 + self.oy, pad, hide)
+
+    def save(self, *a, **kw):
+        raise RuntimeError("save the root Canvas, not a SubCanvas")

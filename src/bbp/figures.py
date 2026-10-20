@@ -88,6 +88,14 @@ class _Data:
             self._base = (g, states, country, extent(country))
         return self._base
 
+    def explore(self):
+        """The context of bbp explore (plants, reach and demo tables), built on first use."""
+        if getattr(self, "_ctx", None) is None:
+            from bbp.explore import Ctx
+
+            self._ctx = Ctx(self.cfg, self.ck, data=self)
+        return self._ctx
+
 
 def ratio_classes() -> tuple[np.ndarray, list, list[str]]:
     """log-ratio bin edges, one colour per class (blue: MapBiomas below PAM, red: above, grey: ±10 %), labels."""
@@ -237,11 +245,9 @@ def _chart_axes(cv: Canvas, x, y, w, h, grid_y: bool = False):
 # Fig 1 — study area: one landscape at three resolutions
 # ---------------------------------------------------------------------------
 # (a) Brazil: MapBiomas land cover (pixel view) with the 133 intermediate regions (regional view);
-# (b), (c) two details with the municipal mesh (municipal view), joined to (a) by the NIPE detail device.
-# Right of (a): Brazil and Europe on one equal-area scale, and São Paulo State, the United Kingdom and
-# Germany at the scale of (a).
+# (b..) details with the municipal mesh (municipal view), joined to (a) by the NIPE detail device.
+# Right of (a): Brazil and Europe on one equal-area scale, then the legend. Biomes: names only, no lines.
 BIOME_NUDGE = {"Pampa": (-230e3, -150e3), "Cerrado": (0, 90e3)}   # metres, off the UF labels and connectors
-BIOME_EDGE, BIOME_LS, BIOME_LW = "#4d4d4d", (0, (2.2, 1.6)), 0.35
 LC_FACTORS = (16, 32)               # display grids: ~480 m (details) and ~960 m (national map)
 EU27 = ("AUT BEL BGR HRV CYP CZE DNK EST FIN FRA DEU GRC HUN IRL ITA LVA LTU LUX MLT NLD POL PRT ROU SVK SVN "
         "ESP SWE").split()
@@ -520,7 +526,7 @@ def _geodesic_km2(geom) -> float:
     return abs(Geod(ellps="WGS84").geometry_area_perimeter(geom)[0]) / 1e6
 
 
-def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = None):
+def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = None, host=None):
     import geopandas as gpd
     import matplotlib.patheffects as pe
     from matplotlib.patches import Rectangle
@@ -555,8 +561,7 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
         dets.append(d)
     bottom = [d for d in dets if d.get("place", "bottom") == "bottom"]
     corner = [d for d in dets if d.get("place") == "corner"]
-    leg_w = 41.0
-    big_w = FW - 1.0 - (1.0 + leg_w + 2.0)
+    big_w = FW - 2.0                            # bottom details span the width; the legend sits right of (a)
     TITLE = 4.6
     for d in bottom:
         w = d["window"]
@@ -566,7 +571,7 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
     HB = (max((d["size"][1] for d in bottom), default=0.0) + TITLE + 6.5) if bottom else 0.0
     yA = HB + 1.0 + fs.STRIP                    # bottom of map (a)
     FH = yA + MH + TITLE + 0.5
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     mx = 1.0
     a = cv.map_ax(mx, yA, ext, S)
 
@@ -585,7 +590,6 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
         name_col = next(c for c in ("Bioma", "NAME", "name") if c in biomes)
         parts = biomes.explode(index_parts=False)                    # enclaves < 10,000 km² tangle the map
         biomes = parts[parts.area > 1e10].dissolve(by=name_col, as_index=False)
-        biomes.boundary.plot(ax=a, color=BIOME_EDGE, linewidth=BIOME_LW, linestyle=BIOME_LS, zorder=4.1)
         for _, b in biomes.iterrows():
             p = b.geometry.representative_point()
             dx, dy = BIOME_NUDGE.get(b[name_col], (0, 0))
@@ -608,6 +612,7 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
     g4674 = gpd.read_parquet(cfg.data_dir / "interim" / "municipalities_geom.parquet",
                              columns=["geocode", "geometry"]).set_index("geocode")["geometry"]
     letters = iter("bcdefg")
+    drawn = []                                   # letters of the detail panels drawn (legend: municipal mesh)
     lc16 = disp["paths"][LC_FACTORS[0]] if disp else None
 
     def draw_detail(d, px, py, dsc):
@@ -628,6 +633,7 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
         map_frame(dax, win)
         fs.detail_border(dax)
         letter = next(letters)
+        drawn.append((letter, d))
         # cities: seats of the intermediate regions in the window, plus the named ones
         cen = g[["geocode", "cd_rgint", "geometry"]].copy()
         cen["pt"] = cen.geometry.representative_point()
@@ -667,7 +673,7 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
             pw, ph = s_, s_ * aspect
             for py in np.arange(by0 - 3.0 - ph, yA - 0.01, -0.5):
                 r = box(mx + 0.5, py, mx + 0.5 + pw, py + ph)
-                if py >= yA + 0.5 and r.intersection(land_mm).area <= 0.01 * r.area and mx + 0.5 + pw < bx0 - 2:
+                if py >= yA + 0.5 and not r.buffer(0.8).intersects(land_mm) and mx + 0.5 + pw < bx0 - 2:
                     placed = (mx + 0.5, py, pw)
                     break
             if placed:
@@ -694,8 +700,8 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
 
     cv.panel("a_brazil", mx, yA - fs.STRIP + 0.5, mx + MW, FH, hide=insets)
 
-    # (c..) large details in the bottom row, right of the legend
-    x_big = 1.0 + leg_w + 2.0
+    # (c..) large details in the bottom row, under (a) and the legend
+    x_big = 1.0
     for d in bottom:
         win, dsc = d["window"], d["scale"]
         dw, dh = d["size"]
@@ -763,47 +769,11 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
         y_top -= max(hsa, heu) + 4.0
         ck.add("fig01_locator", True, f"1:{sl * 1000:,.0f}; Brazil {bra_area:,.0f} km², EU-27 {eu_area:,.0f} km²")
 
-        # São Paulo State, the United Kingdom and Germany on one scale, side by side
-        cmp = [("SP", "São Paulo State", states[states["uf"] == "SP"].to_crs("EPSG:4326"))]
-        cmp += [(c, lab, nc[nc[iso] == c]) for c, lab in (("GBR", "United Kingdom"), ("DEU", "Germany"))]
-        cmp = [(c, lab, gg) for c, lab, gg in cmp if len(gg)]
-        sp_codes = set(attrs.loc[attrs["uf"] == "SP", "geocode"])
-        shapes = []
-        for code, lab, gg in cmp:
-            c_ = gg.union_all().centroid
-            gm = _equal_area(gg, round(c_.x, 1), round(c_.y, 1))
-            full = g4674[g4674.index.isin(sp_codes)].union_all() if code == "SP" else gg.union_all()
-            shapes.append((code, lab, gm, _geodesic_km2(full)))
-        gap = 1.6
-        widths = [s_[2].total_bounds[2] - s_[2].total_bounds[0] for s_ in shapes]
-        sc_ = max(S, nice_scale(sum(widths) / (wr - gap * (len(shapes) - 1)), 1000.0))
-        hmax = max((s_[2].total_bounds[3] - s_[2].total_bounds[1]) / sc_ for s_ in shapes)
-        same = "same scale as (a)" if sc_ == S else "same scale"
-        cv.text(xr, y_top, f"São Paulo State, UK, Germany: {same}", fontsize=fs.FS_TITLE, fontweight="bold",
-                va="top")
-        y_top -= 3.6
-        x = xr
-        for (code, lab, gm, km2), w_ in zip(shapes, widths, strict=True):
-            bb = gm.total_bounds
-            h_ = (bb[3] - bb[1]) / sc_
-            del h_
-            sax = cv.map_ax(x, y_top - hmax, (bb[0], bb[2], bb[1], bb[3]), sc_, z=3)       # on one baseline
-            gm.plot(ax=sax, facecolor="#9e9e9e" if code == "SP" else "#c4c4c4", edgecolor="#5a5a5a", linewidth=0.3)
-            map_frame(sax, (bb[0], bb[2], bb[1], bb[3]))
-            short = {"São Paulo State": "São Paulo", "United Kingdom": "UK"}.get(lab, lab)
-            cv.text(x, y_top - hmax - 0.7, f"{short}\n{round(km2, -3):,.0f} km²", fontsize=fs.FS_CRED, va="top",
-                    linespacing=1.2)
-            x += w_ / sc_ + gap
-        if sc_ != S:
-            cv.scale(xr, y_top - hmax - 6.6, sc_, seg_km=200, n=1, bh=0.6, compact=True)
-        cv.panel("same_scale_sp_uk_de", xr, y_top - hmax - 7.6, FW - 0.5, y_top + 3.6)
-        ck.add("fig01_same_scale", True, f"1:{sc_ * 1000:,.0f}; " + "; ".join(f"{s_[1]} {s_[3]:,.0f} km²"
-                                                                              for s_ in shapes))
     else:
         ck.add("fig01_locator", False, "no countries layer (paper.layers.countries_shp): comparisons left out",
                severity="warn")
 
-    # ---- legend and credits (bottom left), north arrow and scale bar under (a) ---------------------------------
+    # ---- legend right of (a), under the comparison; north arrow, scale bar and credits under (a) -------------
     rows = []
     has_second = bool(disp and disp["meta"]["params"]["second_crop"])
     for keys, text in fs.LANDCOVER_LEGEND:
@@ -812,23 +782,27 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
                 text = text.split(" (")[0]                     # no second-crop layer: cotton is 1st season only
             rows.append(("patch", {"fc": fs.LANDCOVER_COLORS[keys[0]], "ec": "#7a7a7a"}, text))
     bnd = [("line", ("#4f4f4f", 0.4), f"State ({states['uf'].nunique()})"),
-           ("line", ("#7d7d7d", 0.3), f"Intermediate region ({region_count})"),
-           ("lineon", (fs.LANDCOVER_COLORS["pasture"], "white", 0.6), "Municipality (b, c)")]
-    if biomes is not None:
-        bnd.append(("line", (BIOME_EDGE, BIOME_LW, BIOME_LS), "Biome (MapBiomas)"))
-    towns = any(d.get("cities") for d in dets)
-    bnd.append(("dot", (4.2, "white", fs.INK, 0.45), "City (region seats" + ("; towns in b)" if towns else ")")))
-    leg_top = HB - 0.5 if HB else yA - fs.STRIP - 1
-    leg_bottom = cv.legend(1.0, leg_top, [(f"Land cover {year}, MapBiomas Col. 11", rows), ("Boundaries", bnd)])
-    cv.panel("legend", 0.5, leg_bottom - 1.5, 1.0 + leg_w, leg_top + 0.5)
+           ("line", ("#7d7d7d", 0.3), f"Intermediate region ({region_count})")]
+    if drawn:
+        bnd.append(("lineon", (fs.LANDCOVER_COLORS["pasture"], "white", 0.6),
+                    f"Municipality ({', '.join(lt for lt, _ in drawn)})"))
+    if drawn:
+        towns = [lt for lt, d in drawn if d.get("cities")]
+        bnd.append(("dot", (4.2, "white", fs.INK, 0.45),
+                    "City (region seats" + (f"; towns in {', '.join(towns)})" if towns else ")")))
+    leg_top = y_top - 0.5
+    leg_bottom = cv.legend(xr, leg_top, [(f"Land cover {year}, MapBiomas Col. 11", rows), ("Boundaries", bnd)])
+    ck.add("fig01_legend_fits", leg_bottom - 1.0 >= HB, f"legend bottom at {leg_bottom:.1f} mm", leg_bottom,
+           severity="warn")
+    cv.panel("legend", xr - 0.5, leg_bottom - 1.5, FW - 0.5, leg_top + 0.5)
     cv.north(mx + 3.0, yA - fs.STRIP + 3.4)
     cv.scale(mx + 6.5, yA - fs.STRIP + 3.2, S, 500)
     sc_note = " and second crop (beta)" if has_second else ""
-    lines = ["Projection: SIRGAS 2000 / Brazil Polyconic", "(EPSG:5880). Data: MapBiomas Col. 11",
-             f"coverage{sc_note}, {year}; MapBiomas", "biomes; IBGE mesh 2025; Natural Earth.", fs.CREDIT_CARTO]
-    cv.ov.text(1.0, 1.0, "\n".join(lines), fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom", ha="left",
-               linespacing=1.3)
-    cv.panel("credits", 0.5, 0.5, 1.0 + leg_w, min(leg_bottom - 1.5, 12.0))
+    lines = ["SIRGAS 2000 / Brazil Polyconic (EPSG:5880).", f"MapBiomas Col. 11 coverage{sc_note}, {year};",
+             "MapBiomas biomes; IBGE mesh 2025; Natural Earth.", fs.CREDIT_CARTO]
+    cv.ov.text(mx + MW, yA - fs.STRIP + 1.0, "\n".join(lines), fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom",
+               ha="right", linespacing=1.3)
+    cv.panel("credits", mx + MW - 50.0, yA - fs.STRIP + 0.5, mx + MW, yA - 0.5)
     ck.add("fig01_scale", True, f"{S:,.0f} m per mm (1:{S * 1000:,.0f})", S)
     area = lc.area_by_group(disp["meta"]) if disp else {}
     data.facts.setdefault("fig01", {})[year] = {
@@ -845,10 +819,16 @@ def fig01_study_area(cfg: Config, ck: CheckLog, data: _Data, year: int | None = 
 # ---------------------------------------------------------------------------
 # Fig 2 — workflow and what the checks caught
 # ---------------------------------------------------------------------------
-STAGE_TEXT = {"ingest": "read and tidy\nevery source", "harmonise": "AMC, SIDRA flags,\ngaps",
-              "area": "observed vs\ndeclared area", "reconcile": "agreement by\nscale (H1)",
-              "inventory": "N₁ and factor\nenvelope (H3)", "analyse": "drivers of the\ndivergence (H2)",
-              "publish": "release, manifest,\nSTAC"}
+STAGE_TEXT = {"ingest": "read and tidy\nevery source", "plants": "registers, sites,\ncut-offs",
+              "harmonise": "AMC, SIDRA\nflags, gaps", "area": "observed vs\ndeclared area",
+              "reconcile": "agreement by\nscale (H1)", "inventory": "N$_1$ and factor\nenvelope (H3)",
+              "analyse": "drivers of the\ndivergence (H2)", "publish": "release,\nmanifest, STAC",
+              "second_crop": "2nd-season\narea, 30 m", "border_share": "crop near\nborders (H2)",
+              "reach": "crop within\nreach, 30 m", "scale": "pixel · mun. ·\nregion (MAUP)",
+              "demo": "typology,\nmandate ruler"}
+# 30 m passes (bbp commands of their own): the stage each one feeds (up) or reads (down)
+PASSES = [("second_crop", "ingest", "up"), ("reach", "plants", "down"), ("scale", "harmonise", None),
+          ("demo", "inventory", "down"), ("border_share", "analyse", "up")]
 
 
 def check_counts(cfg: Config) -> dict[str, dict]:
@@ -864,31 +844,53 @@ def check_counts(cfg: Config) -> dict[str, dict]:
 
 def checks_caught(cfg: Config, counts: dict) -> list[str]:
     """The items of the 'what the checks caught' box, numbers filled from the check logs."""
-    ingest = counts.get("ingest", {}).get("checks", [])
-    border = counts.get("border_share", {}).get("checks", [])
-    herds = sum(len(c["value"] or []) for c in ingest if c["name"].startswith("sidra_3939_") and "_within_" in c["name"]
+    import re
+
+    def of(stage):
+        return {c["name"]: c for c in counts.get(stage, {}).get("checks", [])}
+
+    ingest, border, plants, reach = of("ingest"), of("border_share"), of("plants"), of("reach")
+    herds = sum(len(c["value"] or []) for n, c in ingest.items() if n.startswith("sidra_3939_") and "_within_" in n
                 and not c["passed"])
-    classes = sum(c["passed"] for c in ingest if c["name"].startswith("mapbiomas_class_"))
-    guard = [c for c in border if "_raster_matches_collection_" in c["name"] and c["passed"]]
+    classes = sum(c["passed"] for n, c in ingest.items() if n.startswith("mapbiomas_class_"))
+    guard = [c for n, c in border.items() if "_raster_matches_collection_" in n and c["passed"]]
     values = {"herd_subsets": {"n": herds}, "class_guard": {"n": classes},
               "collection_guard": {"value": f"{guard[-1]['value']:.3%}" if guard else "not run"}}
-    return [item["text"].format(**values.get(item.get("from"), {}))
-            for item in cfg.section("paper").get("checks_caught", [])]
+    if (c := plants.get("plants_biomethane_production_notation")) is not None:
+        values["anp_notation"] = {"n": c["value"]}
+    if (c := plants.get("plants_point_in_declared_municipality_anp_biodiesel_plants")) is not None:
+        m = re.search(r"(\d+) of (\d+)", c.get("detail", ""))
+        values["biodiesel_outside"] = {"n": m.group(1), "of": m.group(2)} if m else {"n": "?", "of": "?"}
+    if (c := plants.get("plants_possible_duplicates")) is not None:
+        values["plant_duplicates"] = {"n": sum((c["value"] or {}).values()),
+                                      "km": f"{float(cfg.section('plants').get('duplicate_km', 2.0)):g}"}
+    stat = [abs(c["value"]) for n, c in reach.items() if n.endswith("_area_matches_statistics") and c["value"] is not None]
+    if stat:
+        values["reach_statistics"] = {"value": f"{max(stat):.4%}"}
+    out = []
+    for item in cfg.section("paper").get("checks_caught", []):
+        key = item.get("from")
+        if key and key not in values:          # its stage has not run: leave the item out
+            continue
+        out.append(item["text"].format(**values.get(key, {})))
+    return out
 
 
-def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data):
+def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data, host=None):
     import textwrap
 
     from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
     counts = check_counts(cfg)
     stages = [s for s in STAGES if s != "sanitation"]  # sanitation feeds PILAR-2b, not the paper
-    W, H = fs.FULL_W, 118.0
-    cv = Canvas(W, H)
+    passes = [p for p, _, _ in PASSES]
+    W, H = fs.FULL_W, 138.5
+    cv = fs.canvas(W, H, host)
     ax = cv.ov
 
-    def box(x, y, w, h, fc="white", ec=fs.MUTED, lw=0.45, r=0.8):
-        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}", fc=fc, ec=ec, lw=lw))
+    def box(x, y, w, h, fc="white", ec=fs.MUTED, lw=0.45, r=0.8, ls="-"):
+        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}", fc=fc, ec=ec, lw=lw,
+                                    ls=ls))
 
     def arrow(p0, p1):
         ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=4.5, lw=0.45, color=fs.INK,
@@ -902,87 +904,121 @@ def fig02_workflow(cfg: Config, ck: CheckLog, data: _Data):
         ax.text(W - 2.5, y1 - 1.4, title.upper(), fontsize=fs.FS_TITLE, fontweight="bold", va="top", ha="right",
                 color=fs.MUTED)
 
+    def unit(x, y, w, h, name, dashed=False):
+        box(x, y, w, h, ec=fs.INK, lw=0.55, ls=(0, (2, 1)) if dashed else "-")
+        ax.text(x + w / 2, y + h - 1.6, name.replace("_", " "), ha="center", va="top", fontsize=fs.FS_TITLE + 0.2,
+                fontweight="bold")
+        ax.text(x + w / 2, y + h - 5.0, STAGE_TEXT.get(name, ""), ha="center", va="top", fontsize=fs.FS_CRED,
+                color=fs.MUTED, linespacing=1.15)
+        c = counts.get(name)
+        ax.text(x + w / 2, y + 1.2, f"{c['total']} checks" if c else "no checks file", ha="center", va="bottom",
+                fontsize=fs.FS_ITEM, fontweight="bold" if c else "normal")
+
+    # ---- sources ----------------------------------------------------------------------------------------------
     pam = ", ".join(str(t) for t in sorted({int(c["pam_table"]) for c in cfg.crops.values()}))
-    groups = [("IBGE", ["Municipal mesh 2025", f"PAM (SIDRA {pam})"]),
-              ("MapBiomas Collection 11", ["Coverage and irrigation statistics", "Second-crop rasters (beta), 30 m",
-                                           "Coverage rasters, 30 m"]),
-              ("CP2b", ["Conversion factors g, TS, VS/TS, BMP",
-                        cfg.factors.get("source", {}).get("version", "").split(" / ")[-1]])]
-    band(91, 117, "Sources")
-    gx, gw, gy, gh = [3, 43, 89], [37, 43, 40], 93, 18
+    fac = cfg.factors.get("source", {}).get("version", "").split(" / ")[-1]
+    groups = [("IBGE", ["Municipal mesh 2025", "PAM (SIDRA", f"  {pam})"]),
+              ("MapBiomas Col. 11", ["Coverage, irrigation stats", "Second crop (beta), 30 m", "Coverage, 30 m"]),
+              ("CP2b", ["Factors g, TS, VS/TS,", "BMP", *textwrap.wrap(fac, 24)[:1]]),
+              ("Plant registers", ["ANP ethanol, biodiesel,", "biomethane (open data)",
+                                   "CIBiogás, ANEEL, MAPA SIF;", "CONAB, EPE (location check)"])]
+    sb0, sb1 = 114.0, 137.5
+    band(sb0, sb1, "Sources")
+    gx, gw, gy, gh = [3.0, 27.0, 57.0, 85.0], [22.0, 28.0, 26.0, 40.0], sb0 + 2.0, 17.0
     for x, w, (agency, items) in zip(gx, gw, groups, strict=True):
         box(x, gy, w, gh)
-        ax.text(x + 1.6, gy + gh - 1.6, agency, fontsize=fs.FS_HEAD - 0.4, fontweight="bold", va="top")
+        ax.text(x + 1.4, gy + gh - 1.4, agency, fontsize=fs.FS_HEAD - 0.6, fontweight="bold", va="top")
         for i, it in enumerate(items):
-            ax.text(x + 1.6, gy + gh - 5.6 - i * 3.3, it, fontsize=fs.FS_ITEM, va="top")
+            ax.text(x + 1.4, gy + gh - 5.2 - i * 3.0, it, fontsize=fs.FS_ITEM - 0.2, va="top")
 
-    band(55, 87, "bbp run: stages and invariant checks")
-    sw, sgap, sx0, sy, sh = 16.4, 1.85, 3, 58, 18
-    bus_y = 89
-    ingest_cx = sx0 + sw / 2
-    for x, w in zip(gx, gw, strict=True):
-        line([x + w / 2, x + w / 2], [gy, bus_y])
-    line([ingest_cx, gx[-1] + gw[-1] / 2], [bus_y, bus_y])
-    arrow((ingest_cx, bus_y), (ingest_cx, sy + sh))
+    # ---- stages (tabular run) and 30 m passes -----------------------------------------------------------------
+    rb0, rb1 = 64.0, 110.0
+    band(rb0, rb1, "bbp: stages of the run, 30 m passes")
+    n = len(stages)
+    sgap, sx0 = 1.6, 3.0
+    sw = (W - 2 * sx0 - (n - 1) * sgap) / n
+    sy, sh = 88.0, 14.0
+    cx = {st: sx0 + i * (sw + sgap) + sw / 2 for i, st in enumerate(stages)}
     for i, st in enumerate(stages):
-        x = sx0 + i * (sw + sgap)
-        box(x, sy, sw, sh, ec=fs.INK, lw=0.55)
-        ax.text(x + sw / 2, sy + sh - 1.8, st, ha="center", va="top", fontsize=fs.FS_TITLE + 0.4, fontweight="bold")
-        ax.text(x + sw / 2, sy + sh - 5.6, STAGE_TEXT.get(st, ""), ha="center", va="top", fontsize=fs.FS_CRED + 0.3,
-                color=fs.MUTED, linespacing=1.2)
-        c = counts.get(st)
-        ax.text(x + sw / 2, sy + 1.5, f"{c['total']} checks" if c else "no checks file", ha="center", va="bottom",
-                fontsize=fs.FS_ITEM, fontweight="bold" if c else "normal")
+        x = cx[st] - sw / 2
+        unit(x, sy, sw, sh, st)
         if i:
             arrow((x - sgap, sy + sh / 2), (x, sy + sh / 2))
+    # sources → ingest (IBGE, MapBiomas, CP2b) and registers → plants
+    bus_y, bus2 = sb0 - 1.2, sb0 - 2.8
+    for x, w in zip(gx[:3], gw[:3], strict=True):
+        line([x + w / 2, x + w / 2], [gy, bus_y])
+    line([cx["ingest"], gx[2] + gw[2] / 2], [bus_y, bus_y])
+    arrow((cx["ingest"], bus_y), (cx["ingest"], sy + sh))
+    rx = gx[3] + gw[3] / 2
+    line([rx, rx], [gy, bus2])
+    line([cx["plants"], rx], [bus2, bus2])
+    arrow((cx["plants"], bus2), (cx["plants"], sy + sh))
+    # passes, each under the stage it feeds or reads
+    py, ph = 67.0, 14.0
+    pcx = {p: cx[st] for p, st, _ in PASSES}
+    for p, _, way in PASSES:
+        unit(pcx[p] - sw / 2, py, sw, ph, p, dashed=True)
+        if way == "up":
+            arrow((pcx[p], py + ph), (pcx[p], sy))
+        elif way == "down":
+            arrow((pcx[p], sy), (pcx[p], py + ph))
+    for a_, b_ in (("reach", "scale"), ("scale", "demo")):
+        arrow((pcx[a_] + sw / 2, py + ph / 2), (pcx[b_] - sw / 2, py + ph / 2))
+    mid = (cx["area"] + cx["reconcile"]) / 2
+    ax.text(mid, py + ph - 0.6, "30 m passes, own commands;\ntables released by publish", ha="center", va="top",
+            fontsize=fs.FS_CRED, color=fs.MUTED, style="italic", linespacing=1.15)
 
-    band(30, 51, "Products")
+    # ---- products -----------------------------------------------------------------------------------------------
+    band(38, 60, "Products")
     prod = [("Release", "CSV, GeoPackage, manifest\nwith SHA-256 of every input"),
             ("PostGIS", "versioned load,\nviews read by PILAR-2b"),
             ("STAC catalogue", "one item per release\nfile, size and checksum"),
             ("Paper", "numbers.json, tables,\nfigures, captions")]
-    pw, pgap, py, ph = 30.0, 2.0, 32.5, 12.0
-    pub_cx = sx0 + (len(stages) - 1) * (sw + sgap) + sw / 2
-    pbus = 53
+    pw, pgap, qy, qh = 28.5, 2.0, 40.5, 12.0
+    pub_cx = cx["publish"]
+    pbus = 62.0
     line([pub_cx, pub_cx], [sy, pbus])
     xs = [3 + i * (pw + pgap) for i in range(len(prod))]
     line([xs[0] + pw / 2, pub_cx], [pbus, pbus])
     for x, (t, sub) in zip(xs, prod, strict=True):
-        arrow((x + pw / 2, pbus), (x + pw / 2, py + ph))
-        box(x, py, pw, ph)
-        ax.text(x + 1.5, py + ph - 1.5, t, fontsize=fs.FS_TITLE + 0.2, fontweight="bold", va="top")
-        ax.text(x + 1.5, py + 1.2, sub, fontsize=fs.FS_CRED + 0.3, va="bottom", color=fs.MUTED, linespacing=1.2)
+        arrow((x + pw / 2, pbus), (x + pw / 2, qy + qh))
+        box(x, qy, pw, qh)
+        ax.text(x + 1.5, qy + qh - 1.5, t, fontsize=fs.FS_TITLE + 0.2, fontweight="bold", va="top")
+        ax.text(x + 1.5, qy + 1.2, sub, fontsize=fs.FS_CRED + 0.3, va="bottom", color=fs.MUTED, linespacing=1.2)
 
-    rel = {k: v for k, v in counts.items() if k in stages or k in ("second_crop", "border_share")}
+    # ---- what the checks caught -------------------------------------------------------------------------------
+    rel = {k: v for k, v in counts.items() if k in stages or k in passes}
     total, failed = sum(v["total"] for v in rel.values()), sum(v["failed"] for v in rel.values())
     warns = sum(v["warnings"] for v in rel.values())
     items = checks_caught(cfg, counts)
-    box(1, 1, W - 2, 26, ec=fs.INK, lw=0.55, r=1.0)
-    ax.text(2.5, 25.4, "WHAT THE CHECKS CAUGHT", fontsize=fs.FS_HEAD, fontweight="bold", va="top")
-    ax.text(W - 2.5, 25.4, f"{total} checks in this run · {failed} failed · {warns} warnings", fontsize=fs.FS_ITEM,
+    box(1, 1, W - 2, 34, ec=fs.INK, lw=0.55, r=1.0)
+    ax.text(2.5, 33.4, "WHAT THE CHECKS CAUGHT", fontsize=fs.FS_HEAD, fontweight="bold", va="top")
+    ax.text(W - 2.5, 33.4, f"{total} checks in this run · {failed} failed · {warns} warnings", fontsize=fs.FS_ITEM,
             va="top", ha="right", color=fs.MUTED)
     half = (len(items) + 1) // 2
+    pitch = min(6.0, 27.0 / max(half, 1))
     for i, it in enumerate(items):
         col, row = divmod(i, half)
-        ax.text(3 + col * 64, 20.2 - row * 6.0, "–", fontsize=fs.FS_ITEM, va="top")
-        ax.text(5.5 + col * 64, 20.2 - row * 6.0, textwrap.fill(it, 62), fontsize=fs.FS_ITEM, va="top",
-                linespacing=1.2)
-    ck.add("fig02_stage_check_counts", all(s in counts for s in stages),
-           f"no checks file for: {[s for s in stages if s not in counts]}", severity="warn")
+        ax.text(3 + col * 64, 28.6 - row * pitch, "–", fontsize=fs.FS_ITEM, va="top")
+        ax.text(5.5 + col * 64, 28.6 - row * pitch, textwrap.fill(it, 60), fontsize=fs.FS_ITEM, va="top",
+                linespacing=1.15)
+    missing = [s for s in [*stages, *passes] if s not in counts]
+    ck.add("fig02_stage_check_counts", not missing, f"no checks file for: {missing}", severity="warn")
     return cv
 
 
 # ---------------------------------------------------------------------------
 # Fig 3 — national area, observed vs declared
 # ---------------------------------------------------------------------------
-def fig03_national_area(cfg: Config, ck: CheckLog, data: _Data):
+def fig03_national_area(cfg: Config, ck: CheckLog, data: _Data, host=None):
     nat = data.get("unit_ratios_nation")
     years = summary_years(cfg)
     crops = [c for c in cfg.crops if c in set(nat["crop"])]
     ncol, left, gx, w, h, gy = 4, 8.0, 6.0, 25.0, 24.0, 10.5
     nrow = int(np.ceil((len(crops) + 1) / ncol))
     FW, FH = fs.FULL_W, nrow * (h + gy) + 1
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     for k, c in enumerate(crops):
         r, col = divmod(k, ncol)
         x, y = left + col * (w + gx), FH - (r + 1) * (h + gy) + 5.5
@@ -1009,7 +1045,7 @@ def fig03_national_area(cfg: Config, ck: CheckLog, data: _Data):
 # ---------------------------------------------------------------------------
 # Fig 4 — agreement vs scale (C1)
 # ---------------------------------------------------------------------------
-def fig04_agreement_scale(cfg: Config, ck: CheckLog, data: _Data):
+def fig04_agreement_scale(cfg: Config, ck: CheckLog, data: _Data, host=None):
     from matplotlib.ticker import PercentFormatter
 
     ag = data.get("agreement_by_scale")
@@ -1019,7 +1055,7 @@ def fig04_agreement_scale(cfg: Config, ck: CheckLog, data: _Data):
     m = ag[ag["year"].isin(years)].groupby(["crop", "scale"])[["area_share_within_25pct",
                                                                "share_within_25pct"]].mean()
     FW, FH = fs.FULL_W, 64.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     xs = np.arange(len(scales))
     pw, ph, y0 = 45.0, 44.0, 11.0
     for i, (key, title) in enumerate([("area_share_within_25pct", "Weighted by declared area"),
@@ -1055,7 +1091,7 @@ def _crop_maps_layout(ext, ncol: int = 4, width: float = fs.FULL_W, gap: float =
     return S, (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
 
 
-def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data):
+def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data, host=None):
     g, states, country, ext = data.base()
     units = data.get("unit_ratios_municipality")
     years = summary_years(cfg)
@@ -1067,7 +1103,7 @@ def fig05_log_ratio_maps(cfg: Config, ck: CheckLog, data: _Data):
     nrow = int(np.ceil(len(crops) / ncol))
     row_h = MH + title_h
     FW, FH = fs.FULL_W, LB + nrow * row_h + 1.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     for i, c in enumerate(crops):
         r, col = divmod(i, ncol)
         x, y = 1.0 + col * (MW + gap), LB + (nrow - 1 - r) * row_h
@@ -1164,9 +1200,22 @@ def example_candidates(cfg: Config, data: _Data, n: int = 5) -> pd.DataFrame:
     return res.drop(columns=["abs_lr"])
 
 
+def _vrt_sources_exist(vrt: Path) -> bool:
+    """Every SourceFilename of a VRT is a file on this machine."""
+    import xml.etree.ElementTree as ET
+
+    for el in ET.parse(vrt).getroot().iter("SourceFilename"):
+        p = Path(el.text or "")
+        if el.get("relativeToVRT") == "1":
+            p = vrt.parent / p
+        if not p.exists():
+            return False
+    return True
+
+
 def _coverage_source(cfg: Config, year: int) -> Path | None:
     vrt = cfg.data_dir / "interim" / "coverage_vrt" / f"brazil_coverage-col11_{year}.vrt"
-    if vrt.exists():
+    if vrt.exists() and _vrt_sources_exist(vrt):      # a VRT written elsewhere (Docker) is rebuilt here
         return vrt
     from bbp.ingest.border_share import build_vrt, find_year_sources
 
@@ -1209,7 +1258,7 @@ def _chip(a, src: Path, geom_4674, neighbours, max_px: int, lut: np.ndarray, sid
     return arr
 
 
-def fig06_examples(cfg: Config, ck: CheckLog, data: _Data):
+def fig06_examples(cfg: Config, ck: CheckLog, data: _Data, host=None):
     import geopandas as gpd
 
     spec = cfg.section("paper").get("fig6", {})
@@ -1239,7 +1288,7 @@ def fig06_examples(cfg: Config, ck: CheckLog, data: _Data):
     cw, cx0, cgap, below, title_h = 44.0, 1.0, 6.0, 14.0, 4.0
     FW = fs.FULL_W
     FH = fs.STRIP + 2 * (cw + below + title_h) + 1.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     counts = np.zeros(256, dtype=np.int64)
     letters = "abcd"
     for k, p in enumerate(picks):
@@ -1296,7 +1345,7 @@ def fig06_examples(cfg: Config, ck: CheckLog, data: _Data):
 # ---------------------------------------------------------------------------
 # Fig 7 — H2 variance partition (C2)
 # ---------------------------------------------------------------------------
-def fig07_h2_variance(cfg: Config, ck: CheckLog, data: _Data):
+def fig07_h2_variance(cfg: Config, ck: CheckLog, data: _Data, host=None):
     from matplotlib.patches import Rectangle
 
     fit, moran = data.get("h2_model_fit"), data.get("h2_moran")
@@ -1310,7 +1359,7 @@ def fig07_h2_variance(cfg: Config, ck: CheckLog, data: _Data):
     resid = np.clip(1 - fixed - region, 0, None)
     row = 5.0
     FW, FH = fs.FULL_W, len(crops) * row + 22.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = _chart_axes(cv, 22.0, 9.0, 94.0, len(crops) * row)
     ys = np.arange(len(crops))[::-1]
     parts = [(fixed, "#3b3b3b", "white", "Predictors (marginal R²)"),
@@ -1350,7 +1399,7 @@ SHORT_PREDICTOR = {"log_mun_area_ha": "Municipal area\n(log)", "crop_share": "Cr
                    "border_share_1km": "Crop within 1 km\nof a border", "log_landsat_valid_obs": "Clear Landsat\nobs. (log)"}
 
 
-def fig08_h2_effects(cfg: Config, ck: CheckLog, data: _Data):
+def fig08_h2_effects(cfg: Config, ck: CheckLog, data: _Data, host=None):
     coefs = data.get("h2_mixed_effects")
     if not ck.add("fig08_h2_tables", coefs is not None, "H2 coefficients", severity="warn"):
         return None
@@ -1359,7 +1408,7 @@ def fig08_h2_effects(cfg: Config, ck: CheckLog, data: _Data):
     row, left, gap = 4.6, 22.0, 2.5
     pw = (fs.FULL_W - left - 1.0 - (len(preds) - 1) * gap) / len(preds)
     FW, FH = fs.FULL_W, len(crops) * row + 21.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     ys = np.arange(len(crops))[::-1]
     lo = coefs.loc[coefs["term"].isin(preds), "ci_low"].min()
     hi = coefs.loc[coefs["term"].isin(preds), "ci_high"].max()
@@ -1402,7 +1451,7 @@ def municipal_source_effect(n1: pd.DataFrame, years: list[int]) -> pd.DataFrame:
     return pd.DataFrame({"abs_log": np.abs(np.log(w["obs"] / w["dec"]))}).reset_index()
 
 
-def fig09_source_vs_factors(cfg: Config, ck: CheckLog, data: _Data):
+def fig09_source_vs_factors(cfg: Config, ck: CheckLog, data: _Data, host=None):
     import matplotlib.pyplot as plt
 
     n1 = data.get("n1_municipal")
@@ -1414,7 +1463,7 @@ def fig09_source_vs_factors(cfg: Config, ck: CheckLog, data: _Data):
     q = eff.groupby("crop")["abs_log"].quantile([0.1, 0.25, 0.5, 0.75, 0.9]).unstack()
     row = 7.5
     FW, FH = fs.FULL_W, len(crops) * row + 22.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = _chart_axes(cv, 22.0, 12.0, fs.FULL_W - 23.0, len(crops) * row + 4.0)
     ys = np.arange(len(crops))[::-1]
     for y, c in zip(ys, crops, strict=True):
@@ -1457,14 +1506,14 @@ def fig09_source_vs_factors(cfg: Config, ck: CheckLog, data: _Data):
 # ---------------------------------------------------------------------------
 # Fig 10 — C4: source effect by decile of municipal N1 (droppable)
 # ---------------------------------------------------------------------------
-def fig10_source_effect_deciles(cfg: Config, ck: CheckLog, data: _Data):
+def fig10_source_effect_deciles(cfg: Config, ck: CheckLog, data: _Data, host=None):
     n1 = data.get("n1_municipal")
     years = summary_years(cfg)
     d = source_effect_by_decile(n1, years)
     if not ck.add("fig10_deciles", len(d) == 10, f"{len(d)} deciles", severity="warn"):
         return None
     FW, FH = fs.HALF_W, 82.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = _chart_axes(cv, 13.0, 40.0, 64.0, 39.0, grid_y=True)
     b = _chart_axes(cv, 13.0, 11.0, 64.0, 25.0)
     x = d["decile"].to_numpy()
@@ -1494,7 +1543,7 @@ def fig10_source_effect_deciles(cfg: Config, ck: CheckLog, data: _Data):
 # ---------------------------------------------------------------------------
 # Supplement
 # ---------------------------------------------------------------------------
-def figS1_state_detail(cfg: Config, ck: CheckLog, data: _Data):
+def figS1_state_detail(cfg: Config, ck: CheckLog, data: _Data, host=None):
     """Fig 5 for SP and MG: national map with a dashed detail box, connectors, and the detail."""
     g, states, country, ext = data.base()
     units = data.get("unit_ratios_municipality")
@@ -1515,7 +1564,7 @@ def figS1_state_detail(cfg: Config, ck: CheckLog, data: _Data):
         rows.append((ins, win, sd))
     heights = [max(MH, (w[3] - w[2]) / sd) for _, w, sd in rows]
     FW, FH = fs.FULL_W, LB + fs.STRIP + sum(h + row_gap for h in heights) + 1.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     y = FH - 1.0
     for k, ((ins, win, sd), h) in enumerate(zip(rows, heights, strict=True)):
         y -= h + row_gap
@@ -1548,10 +1597,10 @@ def figS1_state_detail(cfg: Config, ck: CheckLog, data: _Data):
     return cv
 
 
-def figS2_rank_shift(cfg: Config, ck: CheckLog, data: _Data):
+def figS2_rank_shift(cfg: Config, ck: CheckLog, data: _Data, host=None):
     rs = data.get("rank_shift")
     FW, FH = fs.FULL_W, 48.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     for i, (col, title) in enumerate([("spearman_rho", "Spearman ρ, municipal N$_1$ obs vs dec"),
                                       ("top_decile_turnover", "Top-decile turnover")]):
         x0 = 11.0 + i * 61.0
@@ -1588,12 +1637,12 @@ def _hexbin(ax, x, y, xlabel, ylabel):
     ax.set_ylabel(ylabel)
 
 
-def figS3_scatters(cfg: Config, ck: CheckLog, data: _Data):
+def figS3_scatters(cfg: Config, ck: CheckLog, data: _Data, host=None):
     units = data.get("unit_ratios_municipality")
     n1 = data.get("n1_municipal")
     year = summary_years(cfg)[-1]
     FW, FH = fs.FULL_W, 64.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = _chart_axes(cv, 12.0, 11.0, 47.0, 47.0)
     u = units[(units["crop"] == SECOND_CROP) & (units["year"] == year) & (units["presence"] == "both")]
     _hexbin(a, np.log10(u["a_dec_ha"]), np.log10(u["a_obs_ha"]), "Declared (ha)", "Observed (ha)")
@@ -1610,14 +1659,14 @@ def figS3_scatters(cfg: Config, ck: CheckLog, data: _Data):
     return cv
 
 
-def figS4_ccc_scale(cfg: Config, ck: CheckLog, data: _Data):
+def figS4_ccc_scale(cfg: Config, ck: CheckLog, data: _Data, host=None):
     ag = data.get("agreement_by_scale")
     years = summary_years(cfg)
     crops = [c for c in cfg.crops if c in set(ag["crop"])]
     scales = [s for s in ("municipality", "amc", "rgint", "uf") if s in set(ag["scale"])]
     m = ag[ag["year"].isin(years)].groupby(["crop", "scale"])["lin_ccc"].mean()
     FW, FH = fs.HALF_W, 60.0
-    cv = Canvas(FW, FH)
+    cv = fs.canvas(FW, FH, host)
     a = _chart_axes(cv, 12.0, 10.0, 52.0, 47.0, grid_y=True)
     xs = np.arange(len(scales))
     ends = []
@@ -1634,15 +1683,214 @@ def figS4_ccc_scale(cfg: Config, ck: CheckLog, data: _Data):
     return cv
 
 
+# ---------------------------------------------------------------------------
+# Supplement: N1 by level (state, intermediate region, municipality) and its hot spots
+# ---------------------------------------------------------------------------
+N1_SHARE_Q = [0.2, 0.4, 0.6, 0.8, 0.9, 0.95]          # class breaks: quantiles of the municipal density
+GI_CLASSES = [(2.576, "Hot spot, 99 %", "#b2182b"), (1.960, "Hot spot, 95 %", "#ef8a62"),
+              (1.645, "Hot spot, 90 %", "#fddbc7"), (-1.645, "Not significant", "#f0f0f0"),
+              (-1.960, "Cold spot, 90 %", "#d1e5f0"), (-2.576, "Cold spot, 95 %", "#67a9cf"),
+              (-np.inf, "Cold spot, 99 %", "#2166ac")]
+LISA_COLORS = {"HH": ("#c1121f", "High–high"), "LL": ("#2166ac", "Low–low"), "HL": ("#f4a582", "High–low"),
+               "LH": ("#92c5de", "Low–high"), "": ("#f0f0f0", "Not significant")}
+
+
+def _n1_density(cfg: Config, data: _Data):
+    """Municipal N1 (observed area, CP2b reference factors) of the demo year, with the IBGE area (km²)."""
+    year = int(cfg.section("demo").get("year", cfg.years[-1]))
+    n1 = data.get("n1_municipal")
+    attrs = data.get("municipality_attributes")
+    if n1 is None or attrs is None or "area_km2_ibge" not in attrs or year not in set(n1["year"]):
+        return None
+    n1 = n1[(n1["year"] == year) & (n1["variant"] == "obs")]
+    g = data.base()[0]
+    g = g.assign(n1=g["geocode"].map(n1.groupby("geocode")["n1_ref_nm3"].sum()).fillna(0.0),
+                 area=g["geocode"].map(attrs.set_index("geocode")["area_km2_ibge"]))
+    return year, g
+
+
+def figS_n1_levels(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    """N1 per km² at three levels on the same classes: the MAUP of the potential itself."""
+    from matplotlib import colormaps
+
+    got = _n1_density(cfg, data)
+    if got is None:
+        return None
+    year, g = got
+    _, states, country, ext = data.base()
+    levels = [("uf", "State", g.dissolve(by="uf", aggfunc="sum", as_index=False)[["uf", "n1", "area", "geometry"]]),
+              ("cd_rgint", "Intermediate region",
+               g.dissolve(by="cd_rgint", aggfunc="sum", as_index=False)[["cd_rgint", "n1", "area", "geometry"]]),
+              ("geocode", "Municipality", g)]
+    tot = [float(lv["n1"].sum()) for _, _, lv in levels]
+    ck.add("figS_n1_levels_add_up", max(abs(t / tot[-1] - 1) for t in tot) < 1e-9 if tot[-1] else False,
+           f"N1 {tot[-1] / 1e9:.2f} bn Nm³ at every level", tot[-1])
+    dens = (g["n1"] / g["area"] / 1e3).replace([np.inf, -np.inf], np.nan)
+    edges = np.quantile(dens[dens > 0].dropna(), N1_SHARE_Q)
+    cmap = colormaps["YlOrBr"]
+    from matplotlib.colors import to_hex
+
+    colors = ["#f7f7f7"] + [to_hex(cmap(v)) for v in np.linspace(0.12, 0.95, len(edges) + 1)]   # 0, then bins
+    FW, gap = fs.FULL_W, 2.0
+    w = (FW - 2.0 - 2 * gap) / 3
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT, LEG = 4.4, 4 * fs.ROW + 7.0
+    FH = MH + TT + LEG
+    cv = fs.canvas(FW, FH, host)
+    y0 = FH - MH - TT + 0.2
+    for i, (key, title, lv) in enumerate(levels):
+        x = 1.0 + i * (w + gap)
+        a = cv.map_ax(x, y0, ext, S)
+        d = (lv["n1"] / lv["area"] / 1e3).fillna(0)
+        cls = np.where(d > 0, np.digitize(d, edges) + 1, 0)
+        lv.plot(ax=a, color=[colors[k] for k in cls], linewidth=0, zorder=1)
+        if key != "geocode":
+            lv.boundary.plot(ax=a, color="white", linewidth=0.2, zorder=2)
+        states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.25, zorder=3)
+        country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.4, zorder=3.2)
+        map_frame(a, ext)
+        cv.text(x, y0 + MH + 0.4, f"({'abc'[i]}) {title} ({len(lv):,})", fontsize=fs.FS_TITLE + 0.2,
+                fontweight="bold", va="bottom")
+        cv.panel(f"{'abc'[i]}_{key}", x, y0, x + MW, y0 + MH + TT - 0.2)
+    labs = ["0", f"< {edges[0]:.2g}", *[f"{lo:.2g}–{hi:.2g}" for lo, hi in zip(edges[:-1], edges[1:], strict=True)],
+            f"≥ {edges[-1]:.2g}"]
+    rows = [("patch", {"fc": c, "ec": "#7a7a7a"}, lab) for c, lab in zip(colors, labs, strict=True)]
+    half = (len(rows) + 1) // 2
+    cv.text(1.0, LEG - 1.0, "N1, thousand Nm³ CH4 per km² per year", fontsize=fs.FS_TITLE, va="top")
+    cv.legend(1.0, LEG - 4.4, [("", rows[:half])], header=None)
+    cv.legend(30.0, LEG - 4.4, [("", rows[half:])], header=None)
+    cv.text(62.0, LEG - 4.4, f"Crop residues, observed area (MapBiomas Col. 11 {year}; 2nd-season corn: second-crop "
+            "layer),\nCP2b reference factors. Classes: quantiles 20–95 % of the municipal density, the same\non "
+            f"the three maps. IBGE areas and mesh 2025. {fs.CREDIT_CARTO}", fontsize=fs.FS_CRED - 0.2,
+            color=fs.MUTED, va="top", linespacing=1.3)
+    cv.panel("legend", 0.5, 0.0, FW - 0.5, LEG)
+    data.facts["n1_levels"] = {"year": year, "edges": [float(e) for e in edges], "n1_total_nm3": tot[-1]}
+    return cv
+
+
+def figS_hot_spots(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    """Where N1 per km² clusters: (a) Getis–Ord Gi*, (b) local Moran (LISA) clusters, queen contiguity."""
+    from bbp.analyse import getis_ord_gi_star, local_moran, morans_i, queen_neighbours
+
+    got = _n1_density(cfg, data)
+    if got is None:
+        return None
+    year, g = got
+    _, states, country, ext = data.base()
+    perms = int(cfg.section("paper").get("lisa_permutations", 999))
+    alpha = 0.05
+    dens = (g.set_index("geocode")["n1"] / g.set_index("geocode")["area"] / 1e3).replace([np.inf, -np.inf], np.nan)
+    nb = queen_neighbours(g.set_index("geocode").geometry)
+    islands = sum(not v for v in nb.values())
+    gi = getis_ord_gi_star(dens, nb)
+    lisa = local_moran(dens, nb, permutations=perms)
+    glob = morans_i(dens, nb, permutations=perms)
+    ck.add("figS_hot_spots_gi_finite", int(gi.notna().sum()) >= len(dens.dropna()) - islands,
+           f"{int(gi.notna().sum())} of {len(dens.dropna())} municipalities with a Gi* z ({islands} without "
+           "neighbours)", int(gi.notna().sum()))
+    hot = int((gi >= 1.960).sum())
+    cold = int((gi <= -1.960).sum())
+    sig = lisa[lisa["p_value"] < alpha]
+    counts = sig["quadrant"].value_counts().to_dict()
+    ck.add("figS_hot_spots_global_moran", glob["p_value"] < alpha, f"Moran's I {glob['morans_i']:.3f} "
+           f"(p = {glob['p_value']:.3f}); Gi* 95 %: {hot} hot, {cold} cold; LISA p < {alpha}: {counts}",
+           glob["morans_i"], severity="warn")
+    FW, gap = fs.FULL_W, 3.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT, LEG = 4.4, 7 * fs.ROW + 4.0
+    FH = MH + TT + LEG + 7.0
+    cv = fs.canvas(FW, FH, host)
+    y0 = FH - MH - TT + 0.2
+    gcls = np.full(len(g), len(GI_CLASSES) - 1)
+    z = g["geocode"].map(gi).to_numpy()
+    for k in range(len(GI_CLASSES) - 1, -1, -1):
+        gcls = np.where(z >= GI_CLASSES[k][0], k, gcls)
+    gcls = np.where(np.isnan(z), 3, gcls)
+    q = g["geocode"].map(sig["quadrant"]).fillna("")
+    panels = [("a_gi_star", "(a) Getis–Ord Gi* of N1 per km²", [GI_CLASSES[k][2] for k in gcls]),
+              ("b_lisa", "(b) Local Moran clusters (LISA)", [LISA_COLORS[v][0] for v in q])]
+    for i, (name, title, cols) in enumerate(panels):
+        x = 1.0 + i * (w + gap)
+        a = cv.map_ax(x, y0, ext, S)
+        g.plot(ax=a, color=cols, linewidth=0, zorder=1)
+        states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.28, zorder=3)
+        country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+        map_frame(a, ext)
+        cv.text(x, y0 + MH + 0.4, title, fontsize=fs.FS_TITLE + 0.2, fontweight="bold", va="bottom")
+        cv.panel(name, x, y0, x + MW, y0 + MH + TT - 0.2)
+    cv.legend(1.0, y0 - 1.5, [("Gi* z-score (a)", [("patch", {"fc": c, "ec": "#7a7a7a"}, lab)
+                                                   for _, lab, c in GI_CLASSES])], header=None)
+    cv.legend(1.0 + w + gap, y0 - 1.5, [(f"LISA, p < {alpha:g} (b)", [("patch", {"fc": c, "ec": "#7a7a7a"}, lab)
+                                                                        for c, lab in LISA_COLORS.values()])],
+              header=None)
+    cv.text(1.0, 0.6, f"Municipal N1 per km², observed area {year}, CP2b reference factors. Queen contiguity on the "
+            f"2025 mesh; Gi*: binary weights with the unit itself,\nnormal z; LISA: row-standardised weights, "
+            f"{perms} conditional permutations, no correction for multiple tests. Global Moran's I "
+            f"{glob['morans_i']:.2f} (p = {glob['p_value']:.3f}). {fs.CREDIT_CARTO}", fontsize=fs.FS_CRED - 0.2,
+            color=fs.MUTED, va="bottom", linespacing=1.3)
+    data.facts["n1_hot_spots"] = {"year": year, "morans_i": glob["morans_i"], "p_value": glob["p_value"],
+                                  "gi_hot_95": hot, "gi_cold_95": cold, "lisa": counts, "permutations": perms}
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# composites and figures drawn by bbp explore
+# ---------------------------------------------------------------------------
+def _explore(name: str, **kw):
+    def draw(cfg: Config, ck: CheckLog, data: _Data, host=None):
+        from bbp import explore
+
+        return getattr(explore, name)(data.explore(), host=host, **kw)
+    return draw
+
+
+def fig_h2(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    """Fig 5: effects of the predictors (old Fig 8) over the variance shares and Moran's I (old Fig 7)."""
+    st = fs.Stack(gap=3.0, ck=ck)
+    st.add("a", lambda h: fig08_h2_effects(cfg, ck, data, host=h), head="(a) Standardised effects of the predictors")
+    st.add("b", lambda h: fig07_h2_variance(cfg, ck, data, host=h),
+           head="(b) Share of the variance explained; Moran's I of the residuals")
+    return st.draw()
+
+
+def fig_reach(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    """Fig 7: crop area by distance to the plants (x04) over the plants by family (x01)."""
+    from bbp import explore
+
+    ctx = data.explore()
+    st = fs.Stack(gap=2.0, ck=ck)
+    st.add("ab", lambda h: explore.x04_distance(ctx, host=h))
+    st.add("cdefgh", lambda h: explore.x01_plants(ctx, host=h, start=2))
+    return st.draw()
+
+
+def fig_typology_mandate(cfg: Config, ck: CheckLog, data: _Data, host=None):
+    from bbp import explore
+
+    return explore.typology_mandate(data.explore(), host=host)
+
+
+# the paper: one figure per conclusion step (outline v3); the supplement holds the rest
 FIGURES = {1: ("study_area", fig01_study_area), 2: ("workflow", fig02_workflow),
-           3: ("national_area", fig03_national_area), 4: ("agreement_scale", fig04_agreement_scale),
-           5: ("log_ratio_maps", fig05_log_ratio_maps), 6: ("example_municipalities", fig06_examples),
-           7: ("h2_variance", fig07_h2_variance), 8: ("h2_effects", fig08_h2_effects),
-           9: ("source_vs_factors", fig09_source_vs_factors), 10: ("source_effect_deciles", fig10_source_effect_deciles)}
+           3: ("agreement_scale", fig04_agreement_scale), 4: ("log_ratio_maps", fig05_log_ratio_maps),
+           5: ("h2_drivers", fig_h2), 6: ("source_vs_factors", fig09_source_vs_factors),
+           7: ("distance_to_plants", fig_reach), 8: ("maup_access", _explore("x05_maup")),
+           9: ("typology_mandate", fig_typology_mandate)}
 # other renderings of a figure, drawn after it (only when their inputs exist), e.g. Fig 1 for 2025
 VARIANTS = {1: lambda cfg: [int(y) for y in _fig1_spec(cfg).get("variants") or []]}
-SUPPLEMENT = {"S1": ("state_detail", figS1_state_detail), "S2": ("rank_shift", figS2_rank_shift),
-              "S3": ("scatters", figS3_scatters), "S4": ("ccc_scale", figS4_ccc_scale)}
+SUPPLEMENT = {"S1": ("national_area", fig03_national_area), "S2": ("example_municipalities", fig06_examples),
+              "S3": ("state_detail", figS1_state_detail), "S4": ("rank_shift", figS2_rank_shift),
+              "S5": ("scatters", figS3_scatters), "S6": ("ccc_scale", figS4_ccc_scale),
+              "S7": ("source_effect_deciles", fig10_source_effect_deciles),
+              "S8": ("sp_mills_catchments", _explore("x02_sp_mills")),
+              "S9": ("mill_catchments", _explore("x03_mill_catchments")),
+              "S10": ("regions_within_reach", _explore("x06_regions")),
+              "S11": ("region_typology", _explore("x07_typology")),
+              "S12": ("registers_biomethane", _explore("x08_registers")),
+              "S13": ("n1_by_level", figS_n1_levels), "S14": ("n1_hot_spots", figS_hot_spots)}
 
 
 def file_name(key) -> str:
@@ -1688,5 +1936,17 @@ def build(cfg: Config, ck: CheckLog, only: list[int] | None = None) -> list[Path
                     if p.suffix == ".png":
                         fs.simulate(p, out_dir(cfg) / "figures_check")
             written += paths
+    if not only:                                   # a full run: drop figures of an older numbering
+        import shutil
+
+        stems = {p.stem for p in written}
+        stale = [p for p in folder.glob("fig*") if p.is_file() and p.stem not in stems]
+        stale_panels = [p for p in (out_dir(cfg) / "panels").glob("fig*") if p.is_dir() and p.name not in stems]
+        for p in stale:
+            p.unlink()
+        for p in stale_panels:
+            shutil.rmtree(p)
+        ck.add("figures_stale_removed", True, f"{len(stale)} files, {len(stale_panels)} panel folders of figures "
+               "not in this run", len(stale), severity="warn")
     write_captions(cfg, data, out_dir(cfg) / "captions.md")
     return written

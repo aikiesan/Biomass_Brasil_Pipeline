@@ -49,14 +49,27 @@ def _fig01(cfg: Config, facts: dict) -> str:
                "of its urban area), plus named towns.")
     return (f"Study area at three resolutions. (a) Land cover of Brazil in {year}, MapBiomas Collection 11 (30 m), "
             "drawn in display groups: every 480 m cell takes the group that covers most of it (crops in the colours "
-            "used throughout, other cover in light neutrals), and each printed pixel shows the cell under it."
-            f"{sc} Lines: the {f['states']} states, the {f['regions']} intermediate regions and the biomes "
-            f"(MapBiomas).{det}{check} Right: Brazil and the EU-27 on one Lambert equal-area scale; São Paulo State, "
-            "the United Kingdom and Germany side by side on one scale (areas of the outlines drawn: IBGE mesh, "
-            "Natural Earth 1:50 m). SIRGAS 2000 / Brazil Polyconic (EPSG:5880).")
+            "used throughout; natural vegetation, pasture and forest plantation in MapBiomas legend colours), and "
+            f"each printed pixel shows the cell under it.{sc} Lines: the {f['states']} states and the "
+            f"{f['regions']} intermediate regions; italic: the biomes (MapBiomas).{det}{check} Top right: Brazil and the EU-27 on one Lambert equal-area scale (areas: "
+            "IBGE mesh, Natural Earth 1:50 m). SIRGAS 2000 / Brazil Polyconic (EPSG:5880).")
+
+
+def _hot_spots(year, hs: dict) -> str:
+    head = (f"Where N₁ per km² clusters ({year}): (a) Getis–Ord Gi* z-scores (binary weights with the unit itself), "
+            "(b) local Moran clusters (LISA, p < 0.05")
+    if not hs:
+        return head + ").  [n/a: run bbp figures]"
+    lisa = hs.get("lisa") or {}
+    return (f"{head}, {hs['permutations']} conditional permutations, no correction for multiple tests); queen "
+            f"contiguity on the municipal mesh. Global Moran's I {hs['morans_i']:.2f} (p = {hs['p_value']:.3f}); "
+            f"Gi* at 95 %: {hs['gi_hot_95']} hot and {hs['gi_cold_95']} cold municipalities; LISA: "
+            f"{lisa.get('HH', 0)} high–high, {lisa.get('LL', 0)} low–low.")
 
 
 def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, str]:
+    """Captions keyed by figure name (the file name without its number)."""
+    facts = facts or {}
     p0, p1 = cfg.years[0], cfg.years[-1]
     sy = _get(nums, "study_area", "summary_years", default=[])
     s0, s1 = (sy[0], sy[-1]) if sy else ("[n/a]", "[n/a]")
@@ -64,65 +77,113 @@ def captions(cfg: Config, nums: dict, facts: dict | None = None) -> dict[str, st
     top = dec[-1] if dec else {}
     bottom = dec[0] if dec else {}
     min_area = cfg.section("reconcile").get("min_area_ha", 0)
+    demo = cfg.section("demo")
+    year = demo.get("year", p1)
+    ty = demo.get("typology", {})
+    yld = cfg.section("plants").get("reach", {}).get("cane_yield_t_ha", "[n/a]")
     return {
-        "fig01_study_area": _fig01(cfg, (facts or {}).get("fig01")),
-        "fig02_workflow":
-            "The open workflow (bbp): sources grouped by agency, the stages with the number of invariant checks "
-            "each runs, the products, and what the checks caught in the source data. Every number in the text "
-            "comes from numbers.json, written by the same run.",
-        "fig03_national_area":
-            f"National crop area {p0}–{p1}: observed (MapBiomas Collection 11; second-season corn from the "
-            f"second-crop layer) and declared (IBGE PAM). Shaded: {s0}–{s1}, the years summarised in Figs 4, 5 "
-            "and 7–10.",
-        "fig04_agreement_scale":
-            f"Agreement between observed and declared area from municipality to state: share of the units "
+        # ---- paper ---------------------------------------------------------------------------------------------
+        "study_area": _fig01(cfg, facts.get("fig01")),
+        "workflow":
+            "The open workflow (bbp): sources, the stages of the run and the 30 m passes (dashed: commands of "
+            "their own, tables released by publish), each with the number of invariant checks it runs, the "
+            "products, and what the checks caught in the source data. Every number in the text comes from "
+            "numbers.json and the check logs written by the same run.",
+        "agreement_scale":
+            f"Agreement between observed and declared area from municipality to state (H1): share of the units "
             f"where the two sources are within ±25 % of each other, weighted by declared area (left) and by "
             f"number of units (right), mean {s0}–{s1}. Units where neither source reaches {min_area:g} ha are "
             "not scored; a unit with area in one source only counts as disagreeing. Dashed: (semi-)perennials.",
-        "fig05_log_ratio_maps":
+        "log_ratio_maps":
             f"Observed / declared area per municipality, median {s0}–{s1}, on classes symmetric on the log "
             "scale (±10, 25, 50, 100 %); all maps at the same scale. Hatched: the crop is reported by one source "
             f"only. Blank: neither source reaches {min_area:g} ha. SIRGAS 2000 / Brazil Polyconic.",
-        "fig06_example_municipalities":
-            "Example municipalities on the MapBiomas Collection 11 coverage map (30 m), with the observed and "
-            "declared area of the crop. Chosen by rule (fig06_candidates.csv): (a) soybean with intense double "
-            "cropping, (b) a perennial with much of its area near the municipal border, (c) coffee where the "
-            "area destined for harvest far exceeds the mapped area, (d) a municipality where the sources agree. "
-            "DRAFT: candidates to be confirmed.",
-        "fig07_h2_variance":
-            f"Why the sources diverge (H2): share of the variance of the municipal ln(A_obs/A_dec), {s0}–{s1}, "
-            "explained by the predictors (marginal R²), by the intermediate region (random intercept) and left "
-            "as residual, per crop. Right: Moran's I of the residuals (queen contiguity; * p < 0.05).",
-        "fig08_h2_effects":
-            "Standardised effects of the predictors in the mixed model: change in ln(A_obs/A_dec) per standard "
-            "deviation of each predictor, with 95 % confidence intervals, per crop.",
-        "fig09_source_vs_factors":
+        "h2_drivers":
+            f"Why the sources diverge (H2): municipal ln(A_obs/A_dec), {s0}–{s1}, mixed model per crop. "
+            "(a) Standardised effects of the predictors, change per standard deviation with 95 % confidence "
+            "intervals. (b) Share of the variance explained by the predictors (marginal R²), by the intermediate "
+            "region (random intercept) and left as residual; right: Moran's I of the residuals (queen "
+            "contiguity; * p < 0.05).",
+        "source_vs_factors":
             f"Area source against conversion factors (H3): multiplicative difference between municipal N₁ "
             f"computed from observed and from declared area, {s0}–{s1} (municipality-years with both > 0; "
             "thin line 10th–90th percentile, thick line interquartile range, open circle median, tick 90th "
             "percentile), against the spread of N₁ over the literature factor ranges (grey band: all factors "
             "jointly, min to max; darker: BMP alone).",
-        "fig10_source_effect_deciles":
-            f"Does the area source matter where the potential is? (C4, droppable.) Municipalities ranked by "
-            f"declared N₁ (mean {s0}–{s1}, crops with an observed area) into deciles: median and 90th percentile "
-            f"of the multiplicative difference between N₁ from observed and declared area (top) and the share "
-            f"of national N₁ in each decile (bottom). The top decile holds {_pct(top.get('share_of_national_n1'))} "
+        "distance_to_plants":
+            f"Crop within reach of existing plants, MapBiomas Collection 11 {year}, 30 m pixels (second-season "
+            "corn: second-crop layer). (a) Cumulative share of each crop's area by great-circle distance to the "
+            "nearest operating plant that uses it; (b) the share within 10–100 km. (c–h) The plants by family "
+            "and register, over the crops they draw on; marker area proportional to capacity; open markers: "
+            "construction, expansion or inactive. Straight-line distance: road distances are longer.",
+        "maup_access":
+            f"The same question read at three supports (MAUP): share of each crop's area within a radius of a "
+            f"plant, measured from the 30 m pixels and from the land of the municipality and of the intermediate "
+            f"region (a unit's crop is spread like its land: area-fraction rule), {year}. Red: the gap at 30 km "
+            "between the pixels and the coarsest reading. Centroid and representative-point rules: table "
+            "reach_scale of the release.",
+        "typology_mandate":
+            f"A demonstration. (a) Types of crop composition of the 133 intermediate regions ({year}; centred "
+            "log-ratio of the crop shares, Ward clustering, number of types chosen by stability); grey: less "
+            f"than {ty.get('min_crop_kha', '[n/a]')} kha of crops. (b) N₁ of each region's crop residues "
+            "(observed area, CP2b reference factors) against the share of its crop area within 30 km of a "
+            "biogas plant; marker area: biogas plants in the region; ringed and numbered: priority regions (top "
+            "quartile of N₁, under 25 % within 30 km). (c) Biomethane mandate: targets as volumes (official: "
+            "CNPE Res. 4/2026 and MME Ordinance 942/2026; hatched: 2028–2030 derived from the 2027 base), ANP "
+            "authorised capacity and production (flows), and N₁ of the crops within 30 km of the existing "
+            "biomethane plants (stock; band: factor envelope). The stock is theoretical methane, not an "
+            "available supply.",
+        # ---- supplement ------------------------------------------------------------------------------------------
+        "national_area":
+            f"National crop area {p0}–{p1}: observed (MapBiomas Collection 11; second-season corn from the "
+            f"second-crop layer) and declared (IBGE PAM). Shaded: {s0}–{s1}, the years summarised in Figs 3–6.",
+        "example_municipalities":
+            "Example municipalities on the MapBiomas Collection 11 coverage map (30 m), with the observed and "
+            "declared area of the crop. Chosen by rule (fig06_candidates.csv): (a) soybean with intense double "
+            "cropping, (b) a perennial with much of its area near the municipal border, (c) coffee where the "
+            "area destined for harvest far exceeds the mapped area, (d) a municipality where the sources agree. "
+            "DRAFT: candidates to be confirmed.",
+        "state_detail":
+            f"As Fig 4 for São Paulo and Minas Gerais (median {s0}–{s1}): the dashed box on each national map "
+            "marks the detail on its right, drawn at its own scale (bar beside it).",
+        "rank_shift":
+            "Rank correlation (Spearman) of municipal N₁ computed from the two area sources, and the share of "
+            "the top 10 % of municipalities that changes, per year.",
+        "scatters":
+            "Municipal second-season corn area (left) and municipal N₁, all crops (right), observed vs declared, "
+            f"{s1}; dashed: 1:1. Shading: number of municipalities (log).",
+        "ccc_scale":
+            f"Lin's concordance correlation coefficient between observed and declared area by scale, mean "
+            f"{s0}–{s1}. It stays near 1 because a few large units dominate it, which is why Fig 3 uses the "
+            "share within ±25 % instead.",
+        "source_effect_deciles":
+            f"Does the area source matter where the potential is? Municipalities ranked by declared N₁ (mean "
+            f"{s0}–{s1}, crops with an observed area) into deciles: median and 90th percentile of the "
+            f"multiplicative difference between N₁ from observed and declared area (top) and the share of "
+            f"national N₁ in each decile (bottom). The top decile holds {_pct(top.get('share_of_national_n1'))} "
             f"of national N₁ with a median difference of ×{_exp(top.get('median_abs_log'))}; the bottom decile "
             f"×{_exp(bottom.get('median_abs_log'))}. The same with crop cells below {min_area:g} ha removed: "
             "Table 5.",
-        "figS1_state_detail":
-            f"As Fig 5 for São Paulo and Minas Gerais (median {s0}–{s1}): the dashed box on each national map "
-            "marks the detail on its right, drawn at its own scale (bar beside it).",
-        "figS2_rank_shift":
-            "Rank correlation (Spearman) of municipal N₁ computed from the two area sources, and the share of "
-            "the top 10 % of municipalities that changes, per year.",
-        "figS3_scatters":
-            "Municipal second-season corn area (left) and municipal N₁, all crops (right), observed vs declared, "
-            f"{s1}; dashed: 1:1. Shading: number of municipalities (log).",
-        "figS4_ccc_scale":
-            f"Lin's concordance correlation coefficient between observed and declared area by scale, mean "
-            f"{s0}–{s1}. It stays near 1 because a few large units dominate it, which is why Fig 4 uses the "
-            "share within ±25 % instead.",
+        "sp_mills_catchments":
+            f"São Paulo sugarcane mills and the cane around them ({year}, 30 m): the radius each mill needs to "
+            f"fill its crushing class at {yld} t/ha, after Cervi et al. (2019).",
+        "mill_catchments":
+            f"Sugarcane mills and their catchments, Brazil ({year}, 30 m pixels): (a) the radius each mill needs "
+            f"at {yld} t/ha, (b) cane area within each radius, (c) cane within 30 km over the cane the mill "
+            "needs, by crushing class, (d) share of the cane area by the number of mills within 30 km.",
+        "regions_within_reach":
+            "Share of each crop's area within reach of the plants that use it, per intermediate region.",
+        "region_typology":
+            "Typology of the intermediate regions in full: (a) types, (b) share of all crops within 30 km of a "
+            "biogas plant, (c) N₁ against that share, priority regions numbered and listed.",
+        "registers_biomethane":
+            "The plant registers compared: (a) cane mills per state in ANP, CONAB and MapBiomas/EPE; (b) distance "
+            "from each ANP mill to the nearest unit of the other register; (c) the ANP biomethane plants by "
+            "authorised capacity (green: at a cane mill).",
+        "n1_by_level":
+            f"N₁ per km² ({year}, observed area, CP2b reference factors) at three levels on the same classes "
+            "(quantiles of the municipal density): (a) state, (b) intermediate region, (c) municipality.",
+        "n1_hot_spots": _hot_spots(year, facts.get("n1_hot_spots") or {}),
     }
 
 
@@ -141,9 +202,8 @@ def write_captions(cfg: Config, data, path: Path) -> Path:
     lines = ["# Figure captions", "", f"Generated by bbp figures (profile {cfg.profile}); numbers from "
              f"{'numbers.json' if nums else 'no numbers.json: run bbp paper'}.", ""]
     for key in [*FIGURES, *SUPPLEMENT]:
-        name = file_name(key)
-        label = f"Figure {key}" if isinstance(key, int) else f"Figure {key}"
-        lines += [f"**{label}.** {caps.get(name, '')}", ""]
+        name = (FIGURES.get(key) or SUPPLEMENT[key])[0]
+        lines += [f"**Figure {key}** ({file_name(key)}). {caps.get(name, '[no caption]')}", ""]
     path.write_text("\n".join(lines), encoding="utf-8")
     log.info("  wrote %s", path)
     return path
