@@ -1113,6 +1113,282 @@ def x08c_mandate(ctx: Ctx, host=None, start: int | None = None):
 
 
 # ---------------------------------------------------------------------------
+# x09 — map vs statistics: agreement on the level and on the change
+# ---------------------------------------------------------------------------
+TREND_CROPS = ["soybean", "corn_2nd", "sugarcane"]
+TREND_SCALES = ["municipality", "rgint", "uf"]
+TREND_SCALE_LABEL = {"municipality": "Municipality", "rgint": "Intermediate\nregion", "uf": "State"}
+
+
+@register("x09", "x09_trend_agreement")
+def x09_trend(ctx: Ctx, host=None):
+    """(a) Zooming out: rank agreement between units on the level (2020–2024) and on the change between the trend
+    windows, same metric (Spearman ρ); (b) municipalities: do the sources agree on the direction of the change,
+    by size of the change (dot area = share of the declared area)."""
+    paths = {n: ctx.proc / f"{n}.parquet" for n in ("agreement_by_scale", "trend_agreement", "trend_by_magnitude")}
+    if not all(p.exists() for p in paths.values()):
+        return None
+    ag, tr, mg = (pd.read_parquet(p) for p in paths.values())
+    years = ctx.cfg.section("reconcile").get("reference_years", ctx.cfg.years[-5:])
+    crops = [c for c in TREND_CROPS if c in set(tr["crop"])]
+    level = ag[ag["year"].isin(years)].groupby(["crop", "scale"], observed=True)["spearman_rho"].mean()
+    change = tr.set_index(["crop", "scale"])["spearman_rho"]
+    n_units = tr.set_index(["crop", "scale"])["n_units"]
+    w0, w1 = tr["window_0"].iloc[0], tr["window_1"].iloc[0]
+
+    FW, FH = fs.FULL_W, 66.0
+    cv = fs.canvas(FW, FH, host)
+    y0, ph = 13.0, 46.0
+
+    # ---- (a) level vs change as the units grow --------------------------------------------------------------
+    xa, wa = 13.0, 46.0
+    a = cv.ax(xa, y0, wa, ph)
+    axis_style(a)
+    xs = np.arange(len(TREND_SCALES))
+    ends = []
+    for c in crops:
+        col = fs.CROP_COLORS[c]
+        lv = [level.get((c, s), np.nan) for s in TREND_SCALES]
+        ch = [change.get((c, s), np.nan) for s in TREND_SCALES]
+        a.plot(xs, lv, color=col, lw=0.9, marker="o", ms=3.0, mec=fs.INK, mew=0.3, zorder=3)
+        a.plot(xs, ch, color=col, lw=0.9, ls=(0, (3, 1.4)), marker="o", ms=3.0, mfc="white", mec=col, mew=0.8,
+               zorder=3)
+        ends.append((fs.label(c), xs[-1] + 0.08, ch[-1], col))
+    a.set_xticks(xs, [TREND_SCALE_LABEL[s] for s in TREND_SCALES], fontsize=fs.FS_ITEM)
+    a.set_xlim(-0.25, len(xs) - 0.55)
+    a.set_ylim(0, 1.05)
+    a.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    a.set_ylabel("Rank agreement between units\n(Spearman ρ, map vs PAM)")
+    fs.direct_labels(a, ends, x_pad=0.12, min_gap=0.07, fontsize=fs.FS_ITEM)
+    panel_title(cv, xa - 11.5, y0 + ph + 1.6, "(a) Zooming out: level vs change", size=fs.FS_LABEL)
+    cv.legend(xa + 1.0, y0 + 9.5, [("", [("line", (fs.MUTED, 0.9), f"level, {years[0]}–{years[-1]}"),
+                                         ("line", (fs.MUTED, 0.9, (0, (3, 1.4))), f"change, {w0} → {w1}")])],
+              header=None)
+    cv.text(xa + wa - 0.5, y0 - 9.4, "states with the crop: " + ", ".join(
+        f"{fs.label(c)} {int(n_units.get((c, 'uf'), 0))}" for c in crops), fontsize=fs.FS_CRED, ha="right",
+            color=fs.MUTED)
+
+    # ---- (b) municipalities: direction agreement by size of the change ----------------------------------------
+    xb, wb = 89.0, 38.0
+    b = cv.ax(xb, y0, wb, ph)
+    axis_style(b)
+    m = mg[(mg["scale"] == "municipality") & mg["crop"].isin(crops)]
+    bins = sorted(m["bin"].unique())
+    edges = m.drop_duplicates("bin").set_index("bin")[["dlog_low", "dlog_high"]]
+
+    def pct(v):
+        return f"{100 * (np.exp(v) - 1):.0f}"
+
+    ticks = []
+    for k in bins:
+        lo, hi = edges.loc[k]
+        ticks.append(f"< {pct(hi)} %" if lo == 0 else (f"> {pct(lo)} %" if not np.isfinite(hi) else
+                                                       f"{pct(lo)}–{pct(hi)} %"))
+    b.axhline(0.5, color=fs.MUTED, lw=0.5, ls=(0, (1, 1.2)), zorder=1)
+    b.text(len(bins) - 1.05, 0.515, "coin flip", fontsize=fs.FS_CRED, color=fs.MUTED, ha="right", va="bottom")
+    ends = []
+    for j, c in enumerate(crops):
+        g = m[m["crop"] == c].set_index("bin").reindex(bins)
+        dx = (j - (len(crops) - 1) / 2) * 0.14
+        x = np.arange(len(bins)) + dx
+        col = fs.CROP_COLORS[c]
+        b.plot(x, g["share_same_sign"], color=col, lw=0.8, zorder=2)
+        b.scatter(x, g["share_same_sign"], s=4 + 90 * g["area_share"].fillna(0), c=col, edgecolors="white",
+                  linewidths=0.4, zorder=3)
+        ends.append((fs.label(c), len(bins) - 1 + 0.2, g["share_same_sign"].iloc[-1], col))
+    b.set_xticks(np.arange(len(bins)), ticks, fontsize=fs.FS_ITEM)
+    b.set_xlim(-0.4, len(bins) - 0.1)
+    b.set_ylim(0.4, 1.02)
+    b.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    b.set_xlabel("Size of the change in crop area")
+    b.set_ylabel("Municipalities where both\nsources change the same way", labelpad=2)
+    panel_title(cv, xb - 14.0, y0 + ph + 1.6, "(b) Municipalities: by size of the change",
+                size=fs.FS_LABEL)
+    kx, ky = xb + 1.5, y0 + ph - 3.0                  # dot-size key
+    cv.text(kx, ky, "share of the crop's area:", fontsize=fs.FS_CRED, va="center", color=fs.MUTED)
+    for v, off in ((0.1, 0.0), (0.5, 9.0)):
+        cv.ov.scatter([kx + 1.5 + off], [ky - 3.6], s=4 + 90 * v, c=fs.MUTED, edgecolors="white", linewidths=0.4)
+        cv.text(kx + 3.2 + off + 1.4 * (v > 0.2), ky - 3.6, f"{100 * v:.0f} %", fontsize=fs.FS_CRED, va="center")
+
+    for c in crops:
+        g = m[m["crop"] == c]
+        small = g[g["bin"] <= 1]
+        ctx.ck.add(f"x09_{c}", True, "level ρ {}; change ρ {}; small changes hold {:.0%} of the area".format(
+            " → ".join(f"{level.get((c, s), np.nan):.2f}" for s in TREND_SCALES),
+            " → ".join(f"{change.get((c, s), np.nan):.2f}" for s in TREND_SCALES), small["area_share"].sum()))
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x10 — where the map and the statistics tell a different story of change: soybean and 2nd-season corn
+# ---------------------------------------------------------------------------
+TREND_MAP_CROPS = ["soybean", "corn_2nd"]
+DIRECTION_STYLE = [("both_up", "#9ecae1", "both grow"), ("both_down", "#bdbdbd", "both shrink"),
+                   ("obs_up_dec_down", "#e66101", "map grows, PAM shrinks"),
+                   ("obs_down_dec_up", "#5e3c99", "map shrinks, PAM grows")]
+GAP_EDGES = [1 / 1.5, 1 / 1.1, 1.1, 1.5]               # map growth factor / PAM growth factor
+GAP_COLORS = ["#5e3c99", "#b2abd2", "#f4f4f4", "#fdb863", "#e66101"]
+GAP_LABELS = ["< 0.67 × (map grew less)", "0.67–0.91 ×", "0.91–1.1 × (same)", "1.1–1.5 ×",
+              "> 1.5 × (map grew more)"]
+NOT_SCORED = "#dcdcdc"
+
+
+def _paint(a, g, codes: pd.Series, colors: list):
+    for k, col in enumerate(colors):
+        sel = g[g["geocode"].map(codes) == k]
+        if len(sel):
+            sel.plot(ax=a, color=col, linewidth=0, rasterized=True, zorder=1)
+
+
+@register("x10", "x10_trend_maps_soy_corn")
+def x10_trend_maps(ctx: Ctx, host=None):
+    """Per municipality, between the trend windows: (left) do the two sources move the same way;
+    (right) how much more, or less, the map grew than the PAM. One row per crop."""
+    from bbp.cartography import boundaries
+    from bbp.figures import _crop_maps_layout
+
+    p = ctx.proc / "trend_units.parquet"
+    if not p.exists():
+        return None
+    t = pd.read_parquet(p)
+    t = t[(t["scale"] == "municipality") & t["crop"].isin(TREND_MAP_CROPS)].copy()
+    t["geocode"] = t["unit"].astype(ctx.g["geocode"].dtype)
+    g, ext = ctx.g, ctx.ext
+    tw = pd.read_parquet(ctx.proc / "trend_agreement.parquet")
+    w0, w1 = tw["window_0"].iloc[0], tw["window_1"].iloc[0]
+    min_ha = float(ctx.cfg.section("reconcile").get("trend_min_area_ha", 100))
+
+    gap, title_h, LB = 3.0, 5.0, 22.0
+    S, MW, MH = _crop_maps_layout(ext, 2, gap=gap)
+    row_h = MH + title_h
+    FW, FH = fs.FULL_W, LB + len(TREND_MAP_CROPS) * row_h + 2.0
+    cv = fs.canvas(FW, FH, host)
+    dir_code = {d: k for k, (d, _, _) in enumerate(DIRECTION_STYLE)}
+    for r, c in enumerate(TREND_MAP_CROPS):
+        tc = t[t["crop"] == c].set_index("geocode")
+        y = LB + (len(TREND_MAP_CROPS) - 1 - r) * row_h
+        ratio = np.exp(tc["dlog_obs"] - tc["dlog_dec"])
+        layers = [(tc["direction"].map(dir_code).dropna().astype(int), [s[1] for s in DIRECTION_STYLE],
+                   "direction of change"),
+                  (pd.Series(np.digitize(ratio, GAP_EDGES), index=tc.index), GAP_COLORS,
+                   "map growth ÷ PAM growth")]
+        area = tc["a_dec_ha_1"]
+        for j, (codes, colors, head) in enumerate(layers):
+            x = 1.0 + j * (MW + gap)
+            a = cv.map_ax(x, y, ext, S)
+            ctx.country.plot(ax=a, color="white", linewidth=0, zorder=0)
+            g[g["geocode"].isin(tc.index)].plot(ax=a, color=NOT_SCORED, linewidth=0, rasterized=True, zorder=0.5)
+            _paint(a, g, codes, colors)
+            boundaries(a, ctx.states, ctx.country, 0.25)
+            map_frame(a, ext)
+            cv.text(x + 0.5, y + MH + 0.8, f"{fs.label(c)} — {head}", fontsize=fs.FS_TITLE + 0.2,
+                    fontweight="bold", va="bottom")
+            # share of the crop's late declared area in each class, bottom left of the map
+            sh = area.groupby(codes).sum() / area.sum()
+            names = [s[2] for s in DIRECTION_STYLE] if j == 0 else ["map grew < 0.67 × PAM", "", "", "",
+                                                                     "map grew > 1.5 × PAM"]
+            lines = [f"{100 * sh.get(k, 0):.0f} % {names[k]}" for k in range(len(colors)) if j == 0 or k in (0, 4)]
+            cv.text(x + 0.5, y + 0.6, "\n".join(["share of the area:", *lines]), fontsize=fs.FS_CRED,
+                    color=fs.MUTED, va="bottom", linespacing=1.15)
+        dis = area[tc["direction"].isin(["obs_up_dec_down", "obs_down_dec_up"])].sum() / area.sum()
+        ctx.ck.add(f"x10_{c}", True, f"{len(tc)} municipalities; opposite directions hold {dis:.1%} of the area", dis)
+
+    cv.legend(1.0, LB - 1.0, [(f"Direction, {w0} → {w1}", [("patch", col, lab) for _, col, lab in DIRECTION_STYLE])],
+              header=None)
+    cv.legend(36.0, LB - 1.0, [("", [("patch", NOT_SCORED, f"< {min_ha:g} ha or year missing"),
+                                     ("patch", {"fc": "white", "ec": fs.HAIR}, "crop absent")])], header=None)
+    cv.legend(1.0 + MW + gap, LB - 1.0, [("Map growth ÷ PAM growth", [
+        ("patch", col, lab) for col, lab in zip(GAP_COLORS, GAP_LABELS, strict=True)])], header=None)
+    cv.north(FW - 4.0, LB + 4.0, h=4.0)                 # in the ocean of the bottom-right map
+    cv.scale(FW - 31.0, LB + 3.8, S, seg_km=1000, n=1, compact=True)
+    cv.text(FW - 1.0, 0.6, f"SIRGAS 2000 / Brazil Polyconic. MapBiomas Col. 11; IBGE PAM. {fs.CREDIT_CARTO}",
+            fontsize=fs.FS_CRED, color=fs.MUTED, ha="right", va="bottom")
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x11 — the land-use chain soybean → pasture → native vegetation, and how many sources see each link
+# (Portuguese labels: a one-page note in Portuguese)
+# ---------------------------------------------------------------------------
+DPP_EDGES = [-10.0, -2.0, 2.0, 10.0]
+DPP_COLORS = ["#a6611a", "#dfc27d", "#f2f2f2", "#80cdc1", "#018571"]
+DPP_LABELS = ["perdeu > 10 p.p.", "perdeu 2–10 p.p.", "±2 p.p.", "ganhou 2–10 p.p.", "ganhou > 10 p.p."]
+GAP_LABELS_PT = ["< 0,67 × (mapa cresceu menos)", "0,67–0,91 ×", "0,91–1,1 × (igual)", "1,1–1,5 ×",
+                 "> 1,5 × (mapa cresceu mais)"]
+
+
+@register("x11", "x11_land_use_chain_pt")
+def x11_chain(ctx: Ctx, host=None):
+    """Three maps, one per link of the chain: soybean growth in the map over the PAM (two sources), then the
+    change in the municipal share of pasture and of native vegetation (MapBiomas only), between the trend
+    windows. Legends under each map; 186 mm wide for an A4 page."""
+    from bbp.cartography import boundaries
+    from bbp.figures import _crop_maps_layout
+    from bbp.reconcile import TREND_COVERS
+
+    p_tu, p_lc = ctx.proc / "trend_units.parquet", ctx.proc / "landcover_change.parquet"
+    if not (p_tu.exists() and p_lc.exists()):
+        return None
+    t = pd.read_parquet(p_tu)
+    t = t[(t["scale"] == "municipality") & (t["crop"] == "soybean")].copy()
+    t["geocode"] = t["unit"].astype(ctx.g["geocode"].dtype)
+    t = t.set_index("geocode")
+    lc = pd.read_parquet(p_lc).set_index("geocode")
+    tw = pd.read_parquet(ctx.proc / "trend_agreement.parquet")
+    w0, w1 = tw["window_0"].iloc[0], tw["window_1"].iloc[0]
+    g, ext = ctx.g, ctx.ext
+
+    FW, gap = 186.0, 3.0
+    S, MW, MH = _crop_maps_layout(ext, 3, width=FW, gap=gap)
+    LB, title_h = 24.0, 8.0
+    FH = LB + MH + title_h
+    cv = fs.canvas(FW, FH, host)
+    panels = [
+        ("(a) Soja: crescimento no mapa ÷ na PAM", "duas fontes: verificável",
+         pd.Series(np.digitize(np.exp(t["dlog_obs"] - t["dlog_dec"]), GAP_EDGES), index=t.index),
+         GAP_COLORS, GAP_LABELS_PT, t.index),
+        ("(b) Pastagem: variação no município", "uma fonte (MapBiomas)",
+         pd.Series(np.digitize(lc["dpp_pasture"], DPP_EDGES), index=lc.index), DPP_COLORS, DPP_LABELS, None),
+        ("(c) Vegetação nativa: variação no município", "uma fonte (MapBiomas)",
+         pd.Series(np.digitize(lc["dpp_natural"], DPP_EDGES), index=lc.index), DPP_COLORS, DPP_LABELS, None),
+    ]
+    for j, (title, sub, codes, colors, labels, scored) in enumerate(panels):
+        x = 1.0 + j * (MW + gap)
+        a = cv.map_ax(x, LB, ext, S)
+        ctx.country.plot(ax=a, color="white", linewidth=0, zorder=0)
+        if scored is not None:
+            g[g["geocode"].isin(scored)].plot(ax=a, color=NOT_SCORED, linewidth=0, rasterized=True, zorder=0.5)
+        _paint(a, g, codes, colors)
+        boundaries(a, ctx.states, ctx.country, 0.25)
+        map_frame(a, ext)
+        cv.text(x + 0.5, LB + MH + 4.2, title, fontsize=fs.FS_TITLE + 0.2, fontweight="bold", va="bottom")
+        cv.text(x + 0.5, LB + MH + 1.0, sub, fontsize=fs.FS_CRED + 0.3, va="bottom",
+                color=fs.DETAIL if j else "#1b7837", fontweight="bold")
+        rows = [("patch", col, lab) for col, lab in zip(colors, labels, strict=True)]
+        if scored is not None:
+            rows.append(("patch", NOT_SCORED, "soja < 100 ha"))
+        cv.legend(x + 0.5, LB - 1.5, [("", rows)], header=None)
+    cv.north(FW - 4.0, LB - 15.0, h=4.0)                  # in the legend band, right of the (c) legend
+    cv.scale(FW - 31.0, LB - 15.2, S, seg_km=1000, n=1, compact=True)
+    cv.text(FW - 1.0, 0.6, f"Médias {w0} vs {w1}. SIRGAS 2000 / Policônica. MapBiomas Col. 11; IBGE PAM. "
+            f"{fs.CREDIT_CARTO.replace('Cartography', 'Cartografia')}", fontsize=fs.FS_CRED, color=fs.MUTED,
+            ha="right", va="bottom")
+    ctx.ck.add("x11_chain", True, f"{len(t)} soybean municipalities scored; {len(lc)} municipalities with cover change",
+               len(t))
+    # national net balance of the three links (MapBiomas), window means: net only, transitions are not seen here
+    mb_p = ctx.cfg.data_dir / "interim" / "mapbiomas_coverage_municipal.parquet"
+    if mb_p.exists():
+        mb = pd.read_parquet(mb_p, columns=["year", "class_id", "area_ha"])
+        (a0, b0), (a1, b1) = (map(int, w.split("–")) for w in (w0, w1))
+        for name, cls in (("soybean", (39,)), ("pasture", TREND_COVERS["pasture"]),
+                          ("natural", TREND_COVERS["natural"])):
+            s = mb[mb["class_id"].isin(cls)].groupby("year")["area_ha"].sum()
+            d = (s.loc[a1:b1].mean() - s.loc[a0:b0].mean()) / 1e6
+            ctx.ck.add(f"x11_net_{name}", True, f"{d:+.1f} Mha between {w0} and {w1} (MapBiomas)", float(d))
+    return cv
+
+
+# ---------------------------------------------------------------------------
 def build(cfg: Config, ck: CheckLog, only: list[str] | None = None) -> list:
     """`bbp explore`: every exploratory figure, each element also on its own."""
     import traceback
