@@ -6,6 +6,10 @@ One line per decision, newest first. Open items are at the end.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-21 | Trend agreement (H1) between two five-year windows, 2008–2012 and 2020–2024, each source averaged over the window; change = ln(late / early) | Five-year means damp single-year noise in both sources; the earliest and latest full windows of the second-crop rasters (to 2024) |
+| 2026-10-21 | A unit enters the trend only with every year of both windows in both sources and ≥ 100 ha in all four means | A year dropped for a mesh mismatch would bias one window; tiny areas give large, meaningless log changes |
+| 2026-10-21 | Size of the change = mean \|Δlog\| of the two sources, bins at 10, 25, 50 %; area weights from the late declared area | Tests whether the disagreement on direction sits where little changed, without favouring either source |
+| 2026-10-21 | Trend gap read against the MapBiomas cover change: natural vegetation (Fig 1 group), pasture and mosaic kept apart, other crops, plantation | Pasture → crop conversion and clearing are the two stories the map may see before the statistics do |
 | 2026-10-19 | Typology: CLR of the regional crop composition, Ward clustering, k by stability (Ward vs k-means ARI) with every type ≥ 10 regions; detection limit 0.1 % for zeros | On these data the silhouette grows with k down to 2-region types; stability under a minimum size gives an interpretable k (5) |
 | 2026-10-19 | Mandate volumes taken as stated by the acts (CNPE Res. 4/2026 art. 3: 504.8 thousand m³/d; MME Ord. 942/2026: 995.2 thousand m³/d); 2028–2030 derived from the 2027 base and labelled indicative | No conversion needed; the exploratory 0.31 M m³/d made the 2026 coverage look 1.63× larger than it is (504.8 / 310) |
 | 2026-10-19 | Mandate stock = N1 within reach of existing plants (theoretical), never added to the flows | Stock and flow are different quantities; N2–N4 stay out of this paper |

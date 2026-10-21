@@ -106,6 +106,37 @@ For each scale × crop × year, over units where max(A_obs, A_dec) ≥ 50 ha
 * Lin's concordance correlation coefficient and Spearman ρ;
 * counts of units present in both sources, in one only.
 
+### Agreement on the change
+
+The sources can agree on the level and still tell different stories of change.
+Each source is averaged over two windows (`reconcile.trend_windows`, default
+2008–2012 and 2020–2024), at every scale. A unit is scored only when both sources
+report every year of both windows, so a year dropped for a mesh mismatch never
+biases one window, and when all four window means reach 100 ha
+(`trend_min_area_ha`). The change of each source is Δlog = ln(mean late / mean early).
+
+* direction class per unit: both up, both down, map up and statistics down, or
+  the reverse (an exact zero change is "flat" and left out of the four shares);
+* per scale × crop (`trend_agreement`): share with the same sign, share in each
+  class, Spearman ρ and Lin's CCC of Δlog, median Δlog per source, and Δlog of
+  the summed area of the scored units (the story each source tells for the set);
+* by size of the change (`trend_by_magnitude`): units binned by the mean |Δlog|
+  of the two sources at ln 1.10, ln 1.25, ln 1.50 (10, 25, 50 %), with the
+  direction agreement and the share of the late declared area in each bin. Is
+  the disagreement where little changed?
+* against land-cover change (`landcover_change`, `trend_landcover`): the change
+  in the municipal share (pp, MapBiomas) of natural vegetation (the Fig 1 group),
+  pasture (15), mosaic of uses (21), other crops and forest plantation, read
+  against the trend gap Δlog(map) − Δlog(PAM). Per crop and cover: Spearman ρ
+  over the municipalities, and quartiles of the cover change (1 = lost most)
+  with their median gap and direction agreement.
+
+Checks: the windows are ordered and inside the period, the direction shares sum
+to at most one, the nation is one unit per crop, the magnitude bins cover the
+whole area, and the cover changes of a municipality sum to at most 100 pp.
+Exploratory figures: x09 (level vs change), x10 (trend maps, soybean and
+second-season corn), x11 (soybean → pasture → native vegetation chain).
+
 ## 5. Explaining divergence (H2)
 
 Response: the municipal log-ratio ln(A_obs/A_dec) per crop for the reference
