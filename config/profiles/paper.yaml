@@ -1,0 +1,114 @@
+# =============================================================================
+# Profile: Geocarto International paper (FOSS4G Europe 2026 special issue)
+# =============================================================================
+# A profile is merged over pipeline.yaml (and paths.local.yaml):
+#
+#   bbp --profile paper paper          # numbers.json, Tables 1–4, Figs 1–6
+#   bbp --profile paper figures        # figures only (`bbp figures` uses this profile by default)
+#
+# `bbp paper` and `bbp figures` read the tables of the full run (data/processed,
+# 2008–2025) and keep the years and crops below. Every table they read is computed
+# per year (agreement, N1, source vs factor effect, rank shift) or over the
+# reference years (H2), so filtering gives the same numbers as rerunning the
+# pipeline with this profile. `bbp --profile paper run` also works, but rewrites
+# data/processed with the shorter period.
+# =============================================================================
+
+years:
+  start: 2008
+  end: 2024               # IBGE marks 2025 as preliminary; the second-crop rasters end in 2024
+
+# Crops of the paper, in display order. Rice and cotton are area only (no CP2b residue
+# factor); first-season corn has no MapBiomas class (declared only, same in both N1 variants).
+crops: [soybean, corn_2nd, sugarcane, coffee, citrus, cotton, rice, corn_1st]
+
+paper:
+  # conversion_factors.yaml `source.version` must be this (checked by `bbp paper`)
+  factor_version: "CP2b canonical v1.0 / Método CP2b v5.1"
+  # years summarised in Tables 2 and 4 and in Figs 3, 4 and 6 (mean or median over them);
+  # default: reconcile.reference_years
+  summary_years: [2020, 2021, 2022, 2023, 2024]
+  # output folder, relative to data_dir (git-ignored like the rest of data/)
+  out_dir: paper
+  # figures are drawn at final size (132 or 90 mm wide), NIPE style; PDF and SVG are vector, PNG and TIFF 600 dpi
+  figure_formats: [pdf, svg, png, tif]
+  dpi: 600
+  # greyscale and deuteranopia renderings of every PNG, for checking (data/paper/figures_check)
+  legibility_check: true
+  # geometry simplification for the maps (degrees, SIRGAS 2000); cached in data/interim
+  simplify_deg: 0.005
+  # map layers, relative to raw_root. countries: any admin-0 polygon layer with South America (e.g. Natural
+  # Earth ne_50m_admin_0_countries, public domain); without it Fig 1 has no South America locator.
+  layers:
+    biomes_shp: "00_Primary_Data_Sources_PILAR2b/SHAPEFILES_MAPBIOMAS_10.1/BIOMES_v2/BIOMES_v2.shp"
+    # Natural Earth 1:50 m admin-0 countries (public domain, v5.1.x): Fig 1 locator and same-scale shapes
+    countries_shp: "00_Primary_Data_Sources_PILAR2b/13_Natural_Earth/ne_50m_admin_0_countries.geojson"
+  # Fig 1: MapBiomas land cover in display groups (bbp.landcover; aggregated once from the 30 m coverage
+  # and cached in data/interim/landcover), the 133 intermediate regions, and details joined by the NIPE
+  # device. `coverage`: rasters of years kept outside inputs.coverage_tif_dir (relative to raw_root).
+  # `variants`: the same figure for other years (fig01_study_area_<year>), drawn when their raster exists.
+  # details: `uf` (window = the state) or `bounds` [lon0, lat0, lon1, lat1]; place: bottom (large, beside the
+  # legend) or corner (small, in the empty south-west corner of the national map). Cities: the seat of each
+  # intermediate region in the window (the municipality named after the region) plus `cities`.
+  fig1:
+    year: 2024
+    variants: [2025]
+    coverage:
+      2025: "brazil_coverage-col11_2025.tif"
+    map_width_mm: 86
+    detail_max_h_mm: 60
+    details:
+      - {key: MT, title: "Centre-north Mato Grosso", bounds: [-57.6, -14.6, -54.4, -11.4], place: corner,
+         city_uf: MT, cities: ["Sorriso", "Lucas do Rio Verde", "Nova Mutum"]}
+    ocean_label: [-41.5, 2.6]          # lon, lat of "Atlantic Ocean" on the national map
+  # Supplementary Fig S1: zoomed log-ratio maps (state, crop)
+  fig4_insets:
+    - {uf: SP, crop: sugarcane}
+    - {uf: MG, crop: coffee}
+    - {uf: SP, crop: citrus}
+  # Fig 6: example municipalities on the Col. 11 coverage raster. `examples` (geocodes) are drawn when set;
+  # until then the top candidate of each rule is drawn and all candidates go to fig06_candidates.csv.
+  fig6:
+    year: 2024
+    examples: []
+    max_chip_px: 900
+  # Fig 2: what the invariant checks caught, numbered in this order and marked on the station `at` (a stage,
+  # a pass, or a line name: factors / satellite / statistics / plants). Numbers marked `from` come from the
+  # run's check logs; the others are results of comparisons outside the stages (source given), kept as text.
+  checks_caught:
+    - {text: "IBGE revised 2024 after our export: municipal sums 0.07–0.35 % off the national totals",
+       source: "SIDRA API national totals (data/scratch/compare_national.py)", at: statistics}
+    - {text: "{n} crop classes checked against their Col. 11 labels (renumbering guard)", from: class_guard,
+       at: ingest}
+    - {text: "ANP biomethane production: {n} values with a point as thousands separator (read as thousands)",
+       from: anp_notation, at: plants}
+    - {text: "{n} of {of} ANP biodiesel plants plotted outside the municipality the register declares",
+       from: biodiesel_outside, at: plants}
+    - {text: "{n} pairs of same-family plants < {km} km apart on different sites (possible duplicates, kept)",
+       from: plant_duplicates, at: plants}
+    - {text: "30 m reach pass vs coverage statistics: crop area off by at most {value}", from: reach_statistics,
+       at: reach}
+    - {text: "Coverage rasters of another collection rejected (Col. 10 differs 1–3 %; Col. 11: {value})",
+       from: collection_guard, at: border_share}
+  # Table 1. Period and files come from the configuration and the data; these are
+  # the facts the pipeline cannot read from the files.
+  sources:
+    - {key: municipalities_shp, source: "IBGE Malha Municipal", version: "2025", access: "geoftp.ibge.gov.br",
+       licence: "public (IBGE)"}
+    - {key: mapbiomas_municipal_xlsx, source: "MapBiomas Brasil — coverage statistics by municipality",
+       version: "Collection 11", access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: second_crop_tif_dir, source: "MapBiomas — second crop (beta), 30 m rasters", version: "Collection 11",
+       access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: mapbiomas_irrigation_xlsx, source: "MapBiomas — irrigation systems by municipality",
+       version: "Collection 11", access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: coverage_tif_dir, source: "MapBiomas — coverage rasters, 30 m (border share)", version: "Collection 11",
+       access: "mapbiomas.org", licence: "CC BY 4.0"}
+    - {key: sidra_5457, source: "IBGE PAM — table 5457 (crops)", version: "SIDRA", access: "sidra.ibge.gov.br",
+       licence: "public (IBGE)"}
+    - {key: sidra_839, source: "IBGE PAM — table 839 (corn by season)", version: "SIDRA",
+       access: "sidra.ibge.gov.br", licence: "public (IBGE)"}
+    - {key: sidra_1612, source: "IBGE PAM — table 1612 (temporary crops)", version: "SIDRA",
+       access: "sidra.ibge.gov.br", licence: "public (IBGE)"}
+    - {key: conversion_factors, source: "CP2b conversion factors (g, TS, VS/TS, BMP)",
+       version: "CP2b canonical v1.0 / Método CP2b v5.1", access: "config/conversion_factors.yaml",
+       licence: "with the code (GPL-3.0)"}

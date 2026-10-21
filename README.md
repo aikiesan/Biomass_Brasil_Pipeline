@@ -29,7 +29,7 @@ PILAR-2b platform.
 
 | Hypothesis | Question | Stage | Main output |
 |---|---|---|---|
-| H1 – scale | Do the sources agree in aggregate and diverge per municipality? | `reconcile` | `agreement_by_scale` (municipality → AMC → intermediate region → state → nation) |
+| H1 – scale | Do the sources agree in aggregate and diverge per municipality? | `reconcile` | `agreement_by_scale` (municipality → AMC → intermediate region → state → nation); `trend_*`, `landcover_change`: do they also agree on the change between 2008–2012 and 2020–2024? |
 | H2 – structure | Is the divergence systematic and explainable? | `reconcile` | `unit_ratios_*`, `predictors` |
 | H3 – consequence | Does switching source move N1 and the municipal ranking as much as the conversion-factor uncertainty does? | `inventory` | `n1_municipal`, `source_vs_factor_effect`, `rank_shift` |
 
@@ -120,6 +120,11 @@ Unicamp VM (SSH tunnel) and the read-only role.
 | `crop_area` | municipality × year × crop | `a_obs_ha` (MapBiomas), `a_dec_ha`, `a_harv_ha`, `prod_t` (PAM) + SIDRA flags |
 | `agreement_by_scale` | scale × crop × year | ratio of totals, log-ratio percentiles, share within ±10/25 %, Lin's CCC, Spearman ρ |
 | `unit_ratios_<scale>` | unit × crop × year | A_obs, A_dec, ratio, log-ratio, presence class |
+| `trend_units` | scale × unit × crop | mean A_obs and A_dec in the early and late windows (`reconcile.trend_windows`), Δlog of each source, direction class |
+| `trend_agreement` | scale × crop | do the sources agree on the change? share with the same sign, by direction, Spearman ρ and Lin's CCC of Δlog, median and total Δlog per source |
+| `trend_by_magnitude` | scale × crop × size of change | direction agreement and share of the area by bin of mean \|Δlog\| |
+| `landcover_change` | municipality | change in the share of natural vegetation, pasture, mosaic of uses, other crops and forest plantation between the windows (pp, MapBiomas) |
+| `trend_landcover` | crop × cover × quantile | Spearman ρ between the trend gap (Δlog map − Δlog PAM) and the cover change; median gap and direction agreement per quantile of the change |
 | `predictors` | municipality × year | municipal area, dominant biome, crop share, double-crop intensity, new-municipality flag |
 | `n1_municipal` | municipality × year × crop × variant | N1 (Nm³ CH₄/yr) at ref/min/max and one-at-a-time bounds |
 | `source_vs_factor_effect` | crop × year | \|ln(N1_obs/N1_dec)\| vs ln(N1_max/N1_min) and per-factor widths |
@@ -128,15 +133,45 @@ Unicamp VM (SSH tunnel) and the read-only role.
 | `sanitation_continuity` | variable | the SNIS → SINISA break: last SNIS year vs first SINISA year over municipalities reporting both |
 
 `bbp run publish` writes `data/release/bbp_v<version>_<date>/` with gzipped CSVs,
-a GeoPackage for the latest common year and `manifest.json` (git commit,
-configuration, SHA-256 of every input and output, check summary) — ready to
-deposit on Zenodo/REDU.
+a GeoPackage for the latest common year, `manifest.json` (git commit,
+configuration, SHA-256 of every input and output, check summary) and a
+self-contained STAC catalogue (`catalog.json`: one collection, one item per
+file, with size, SHA-256, row count and columns) — ready to deposit on Zenodo/REDU.
+
+## Paper package
+
+```bash
+bbp paper                      # numbers.json, Tables 1–5, Figs 1–9 + S1–S14, captions (profile `paper`)
+bbp paper --no-figures         # numbers and tables only
+bbp figures --only 4 5         # selected figures
+bbp landcover [--budget 150]   # Fig 1 land-cover display rasters from the 30 m coverage (once; resumable;
+                               # bbp figures builds them on first use otherwise)
+bbp run plants                 # processing plants (ANP, CIBiogás, ANEEL, MAPA SIF): one register, checked
+bbp reach [--budget 600]       # crop area within reach of the plants from the 30 m pixels (resumable)
+bbp scale                      # the same reach at the pixel, the municipality and the region (MAUP)
+bbp demo                       # typology of the regions (CLR, Ward) and the biomethane mandate ruler
+bbp explore [--only x01 x04]   # exploratory figures x01–x08, each element also on its own (data/paper/explore)
+bbp --profile paper run ...    # any command with config/profiles/paper.yaml merged over pipeline.yaml
+```
+
+The `paper` profile fixes the period (2008–2024), the crops and the factor
+version (checked against `conversion_factors.yaml`). `bbp paper` reads the tables
+of the full run in `data/processed` and keeps the profile's years and crops; every
+table it uses is per year (or over the reference years for H2), so this gives the
+same numbers as a run restricted to the profile. Outputs go to `data/paper/`
+(git-ignored): `numbers.json` (every number quoted in the text, with the SHA-256 of
+the tables it was read from), `tables/table<N>_*.csv|md` and
+`figures/fig<NN>_*.pdf|png` and `captions.md`, made with matplotlib, GeoPandas and rasterio only.
+Figures follow the NIPE/Unicamp cartographic style at Geocarto sizes (132 or 90 mm wide): laid out in
+millimetres, maps at a fixed scale in SIRGAS 2000 / Brazil Polyconic with north arrow, scale bar and
+credits, Liberation Sans (installed in the Docker image), one colour per crop across all figures;
+exported as PDF, SVG, PNG and TIFF (600 dpi). `bbp.figstyle` and `bbp.cartography` hold the style.
 
 ## Repository layout
 
 ```
-config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml · sanitation.yaml
-src/bbp/      ingest/ (sources) · harmonise · area · reconcile · inventory · publish · checks · cli
+config/       pipeline.yaml · crops.yaml · conversion_factors.yaml · municipality_changes.yaml · sanitation.yaml · profiles/
+src/bbp/      ingest/ (sources) · harmonise · area · reconcile · inventory · analyse · publish · stac · paper · figures · checks · cli
 tests/        synthetic-data unit tests (run in CI; no source data needed)
 docs/         methods · data sources · decisions log · deployment
 docker/       initdb scripts for the local PostGIS · roles.sql for production

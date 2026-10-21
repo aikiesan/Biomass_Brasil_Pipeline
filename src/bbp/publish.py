@@ -1,4 +1,4 @@
-"""Build a versioned release folder: CSV tables, a GeoPackage and a manifest with checksums."""
+"""Build a versioned release folder: CSV tables, a GeoPackage, a manifest with checksums and a STAC catalogue."""
 
 from __future__ import annotations
 
@@ -23,8 +23,14 @@ log = logging.getLogger("bbp")
 
 TABLES = [
     "municipality_attributes", "crop_area", "agreement_by_scale", "unit_ratios_municipality", "unit_ratios_rgint",
-    "unit_ratios_uf", "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
+    "unit_ratios_uf", "trend_units", "trend_agreement", "trend_by_magnitude", "landcover_change", "trend_landcover",
+    "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
     "sanitation", "sanitation_continuity",
+    "h2_mixed_effects", "h2_model_fit", "h2_rf_importance", "h2_moran",
+    "plants", "plants_biomethane_snapshots", "plants_register_match",
+    "reach_units", "reach_hist", "reach_distance", "reach_competition", "reach_mills", "reach_aggregation_check",
+    "reach_scale",
+    "demo_typology", "demo_typology_k", "demo_mandate_targets", "demo_mandate_stock",
 ]
 
 
@@ -72,10 +78,13 @@ def git_commit(repo: Path) -> str | None:
 
 
 def _inputs(cfg: Config) -> list[Path]:
+    from bbp.plants import source_paths
+
     paths = [p for _, p in cfg.input_files()]
-    tif_dir = cfg.input_path("second_crop_tif_dir")
-    if tif_dir.is_dir():
-        paths.extend(sorted(tif_dir.glob("*.tif")))
+    paths.extend(source_paths(cfg).values())
+    for key in ("second_crop_tif_dir", "coverage_tif_dir"):
+        if key in cfg.raw["inputs"] and (tif_dir := cfg.input_path(key)).is_dir():
+            paths.extend(sorted(tif_dir.glob("*.tif")))
     return [p for p in paths if p.is_file()]
 
 
@@ -133,6 +142,10 @@ def publish(cfg: Config, ck: CheckLog) -> Path:
     }
     with open(rel / "manifest.json", "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2, ensure_ascii=False, default=str)
+
+    from bbp.stac import write_catalog
+
+    write_catalog(cfg, rel, manifest, ck)
     log.info("Release written to %s", rel)
     return rel
 

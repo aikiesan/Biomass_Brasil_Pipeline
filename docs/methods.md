@@ -106,15 +106,77 @@ For each scale × crop × year, over units where max(A_obs, A_dec) ≥ 50 ha
 * Lin's concordance correlation coefficient and Spearman ρ;
 * counts of units present in both sources, in one only.
 
-## 5. Explaining divergence (H2) — inputs
+### Agreement on the change
 
-`processed/predictors.parquet` (municipality × year): municipal area (log),
-dominant biome, share of the municipality under crops (MapBiomas classes 20,
-35, 39, 40, 41, 46, 47, 48, 62), double-crop intensity (observed
-second-season corn / observed soybean), new-municipality flag. Model fitting
-(mixed model, RF, Moran's I) is done in analysis notebooks on these tables,
-not inside the pipeline. Border-proximity and Landsat-observation predictors
-are planned (see `decisions.md`).
+The sources can agree on the level and still tell different stories of change.
+Each source is averaged over two windows (`reconcile.trend_windows`, default
+2008–2012 and 2020–2024), at every scale. A unit is scored only when both sources
+report every year of both windows, so a year dropped for a mesh mismatch never
+biases one window, and when all four window means reach 100 ha
+(`trend_min_area_ha`). The change of each source is Δlog = ln(mean late / mean early).
+
+* direction class per unit: both up, both down, map up and statistics down, or
+  the reverse (an exact zero change is "flat" and left out of the four shares);
+* per scale × crop (`trend_agreement`): share with the same sign, share in each
+  class, Spearman ρ and Lin's CCC of Δlog, median Δlog per source, and Δlog of
+  the summed area of the scored units (the story each source tells for the set);
+* by size of the change (`trend_by_magnitude`): units binned by the mean |Δlog|
+  of the two sources at ln 1.10, ln 1.25, ln 1.50 (10, 25, 50 %), with the
+  direction agreement and the share of the late declared area in each bin. Is
+  the disagreement where little changed?
+* against land-cover change (`landcover_change`, `trend_landcover`): the change
+  in the municipal share (pp, MapBiomas) of natural vegetation (the Fig 1 group),
+  pasture (15), mosaic of uses (21), other crops and forest plantation, read
+  against the trend gap Δlog(map) − Δlog(PAM). Per crop and cover: Spearman ρ
+  over the municipalities, and quartiles of the cover change (1 = lost most)
+  with their median gap and direction agreement.
+
+Checks: the windows are ordered and inside the period, the direction shares sum
+to at most one, the nation is one unit per crop, the magnitude bins cover the
+whole area, and the cover changes of a municipality sum to at most 100 pp.
+Exploratory figures: x09 (level vs change), x10 (trend maps, soybean and
+second-season corn), x11 (soybean → pasture → native vegetation chain).
+
+## 5. Explaining divergence (H2)
+
+Response: the municipal log-ratio ln(A_obs/A_dec) per crop for the reference
+years (2020–2024), where both sources report the crop.
+
+Predictors (`processed/predictors.parquet`), municipality × year:
+
+* log municipal area; dominant biome; share of the municipality under crops
+  (MapBiomas classes 20, 35, 39, 40, 41, 46, 47, 48, 62); double-crop intensity
+  (observed second-season corn / observed soybean, log1p, capped at 10);
+  new-municipality flag.
+* **Irrigated share**: MapBiomas Col. 11 irrigation systems (center pivot and
+  other systems, municipal statistics) / crop area.
+* **Border share** (`bbp border-share`): share of the crop's observed area
+  within 1 km (and 2 km) of a boundary with another municipality, from the
+  Col. 11 coverage rasters. The mesh is rasterised onto each raster grid;
+  boundary pixels have a 4-neighbour in another municipality (coastline and
+  national border excluded); distances are Euclidean in metres (pixel size at
+  the window's central latitude) in windows with a halo wider than 2 km; areas
+  are geodesic per pixel row. The run is rejected when the raster does not
+  reproduce the Col. 11 municipal statistics (median |raster/stats − 1| ≤ 0.5 %).
+* **Clear Landsat observations** (cloud proxy): mean number of clear Landsat
+  5/7/8/9 Collection 2 observations per crop pixel and year (QA_PIXEL: no fill,
+  dilated cloud, cirrus, cloud, shadow or snow), from Earth Engine.
+
+Models (`bbp run analyse`, fixed seed):
+
+* **Mixed model** (statsmodels MixedLM, REML): standardised numeric predictors,
+  biome and year as fixed effects, random intercept for the intermediate
+  region. Marginal and conditional R² after Nakagawa & Schielzeth (2013).
+  Biome levels with < 30 municipality-years are pooled; when the region
+  variance is not estimable the model falls back to OLS with standard errors
+  clustered by region (recorded in `h2_model_fit.model`).
+* **Random forest** (300 trees, min. 5 per leaf): R² in 5-fold cross-validation
+  grouped by intermediate region (no region in both train and test) and
+  permutation importance on the held-out folds.
+* **Moran's I** of the mixed-model residuals averaged per municipality, queen
+  contiguity, row-standardised, 999 permutations.
+
+Outputs: `h2_mixed_effects`, `h2_model_fit`, `h2_rf_importance`, `h2_moran`.
 
 ## 6. N1 (H3)
 
@@ -135,7 +197,124 @@ are planned (see `decisions.md`).
   municipal N1, using only municipality × crop cells present in both variants.
 * National N1 totals are computed but are **not** a result of the paper.
 
-## 7. Municipal sanitation (platform feed, not part of the paper)
+## 7. Processing plants (verification 2)
+
+`bbp run plants` builds one national register (`interim/plants.parquet`, GeoParquet; `processed/plants.parquet`).
+
+* **Sources.** ANP ethanol plants (cane and corn) and biodiesel plants (Painel Dinâmico, points); ANP biomethane
+  open data (capacity per plant and month, production per state and month); CIBiogás biogas plants, ANEEL SIGA
+  biomass power plants and MAPA SIF slaughterhouses (points, through the MapBiomas infrastructure layers).
+* **One row per plant function.** `family` is the function (sugarcane mill, corn ethanol, biodiesel, biogas,
+  biomethane, biomass power, slaughterhouse); capacity stays in the unit of its source (`capacity_unit`). A flex
+  ethanol plant (cane + corn) is one source record in two families; both rows share one `site_id`, so the plant
+  is counted once as a site. Rows of other registers that are the same site are linked to it: each bagasse power
+  plant joins its nearest sugarcane mill and each biogas power plant its nearest CIBiogás biogas plant, within
+  `site_link_km` (2 km); an ANP biomethane plant joins the single CIBiogás GNR/biomethane plant of its
+  municipality, if there is one. Linking is nearest-only, so a power plant between two mills never merges them.
+* **Status.** `operating` = in operation or expanding (ANP, ANEEL, CIBiogás, SIF statuses); `status_reason`
+  says why not. ANP biomethane: the plants recorded in the snapshot month (`plants.sources.anp_biomethane.snapshot`)
+  operate; a plant whose last record is older is kept, not operating (e.g. Gasgrid / ZEG, São Paulo: no record
+  since 06/2022). The biomethane open data has no coordinates: plants are placed at the municipality's
+  representative point (`located = municipality`).
+* **Biomethane snapshots** (`processed/plants_biomethane_snapshots`): per snapshot month, plants, authorised
+  capacity, biogas capacity and processed biogas (m³/d) and production (m³ in the month and m³/d). The
+  production file mixes two notations: a point is a decimal separator ('4324235.558') except in values of one to
+  three digits followed by groups of exactly three ('173.037' = 173,037 m³), which are read as thousands and
+  checked against the output implied by processed biogas.
+* **Checks** (`checks_plants.json`): every source found and its cut-off recorded; coordinates present and inside
+  Brazil (coastal points: nearest municipality within 5 km); each point inside the municipality the source
+  declares (warning above 5 % per source); possible duplicates (same family and source, < 2 km, different sites);
+  capacity present where the family needs it; count by family and source; biomethane snapshot against the
+  figures quoted for it; the ANP operating mills against the CONAB 2025 and MapBiomas/EPE 2018 registers (share
+  with a unit within 2 km and 10 km, `processed/plants_register_match`).
+
+## 8. Crop area within reach of existing plants (verification 2)
+
+`bbp reach` (30 m, resumable; `plants.reach` in `pipeline.yaml`).
+
+* **Crops** from the MapBiomas Collection 11 coverage raster and the second-crop raster of the same year
+  (2024): sugarcane (class 20), soybean (39), second-season corn (second-crop value 1, whatever the first-season
+  class), all crops (coverage classes 20, 35, 39, 40, 41, 46, 47, 48, 62 or second-crop values 1, 41, 62; a pixel
+  counts once). Pixel area is geodesic (WGS84, per row). Each pixel belongs to the municipality whose polygon
+  holds its centre (the label grid of `bbp border-share`).
+* **Pairs** (crop → family): sugarcane → sugarcane mill, second-season corn → corn ethanol, soybean → biodiesel,
+  all crops → biogas, all crops → biomethane. Only operating plants count.
+* **Distance** is the straight-line distance from each pixel centre to the nearest plant of the family: a great
+  circle on the mean Earth sphere (R = 6371.0088 km), found with a KD tree on unit vectors. It differs from the
+  WGS84 geodesic by < 0.6 % (< 200 m at 30 km; checked on random pairs), whereas a planar distance in SIRGAS 2000 /
+  Brazil Polyconic would be off by up to 5.5 % at the edges of the country. Buffers are therefore geodesic
+  circles; no road network is used (a declared choice: the same distance at every resolution).
+* **Accumulation.** Per pair, municipality and 1 km distance bin to 150 km (one overflow bin beyond), the crop
+  area (`reach_hist`); nationally, 1 km bins to 2000 km (`reach_distance`); the number of plants of the family
+  within 30 km (`reach_competition`, capped at 10). The area within r km of a unit is the sum of its bins below
+  r, at every level (municipality, intermediate region, state, nation: `reach_units`, with mean and median
+  distance and the plants in the unit), so all levels add up to the same national total (checked).
+* **Sugarcane mills** (`reach_mills`): the cane area in 1 km rings around every mill to 150 km; the cane a mill
+  needs = crushing-class midpoint / 75 t ha⁻¹; required radius (smallest radius holding that area), supply
+  ratio within each radius, the share of the cane within 30 km that also has another operating mill within 30 km
+  (contested), and the number of other operating mills within 30 km. The same cane may supply several mills
+  (as in Cervi et al. 2019); contested shares say how much.
+* **Aggregation check.** The same distances measured from the centre of each pixel's 16 × 16 cell (~480 m)
+  give the shares a land-cover aggregation would give (`reach_aggregation_check`); the difference is reported in
+  percentage points. The cells are also written as a raster (`reach_cells_f16.tif`: crop area and area within
+  30 km per crop and pair).
+* **Checks** (`checks_reach.json`): every crop's area in the pass against the published statistics (Col. 11
+  coverage classes; second-crop zonal statistics), share of crop area outside the mesh, every pair holding its
+  whole crop, levels adding up, shares in [0, 1] and growing with the radius, the sphere vs WGS84, the
+  aggregation effect, and the headline numbers (share within each radius, mills short of cane, competition).
+
+## 9. Scale as a property of the system (MAUP)
+
+`bbp scale` (after `bbp reach`; `plants.scale` in `pipeline.yaml`). The same land and the same plants, reach
+measured at three resolutions, for every pair and for radii of 10–2000 km plus an infinite radius.
+
+* **Pixel** (reference): each 30 m crop pixel at its own distance (`reach_hist` below 150 km, the national 1 km
+  curve `reach_distance` above).
+* **Municipality** and **intermediate region**: what a study with statistical units knows, the unit's crop area
+  (the 30 m area summed per unit, so every resolution holds the same land) and its geometry.
+  * `area_fraction` (main rule): the crop is spread over the unit like its land; the share within r km is the
+    share of the unit's land within r km of the nearest operating plant. Land area comes from the ~480 m cells
+    of `reach_cells_f16.tif` (cell centre in the municipality, geodesic cell area); per municipality it matches
+    the IBGE area to a median of 0.15 %. A unit with no cell falls back to its centroid.
+  * `centroid` (sensitivity): the unit counts whole when its centroid (taken in SIRGAS 2000 / Brazil Polyconic)
+    is within r km.
+  * `representative_point`: the same with a point inside the polygon, the rule of the exploratory x05.
+* **Outputs:** `reach_scale` (pair × radius × resolution × rule, national) and `reach_scale_units` (per
+  municipality and intermediate region).
+* **Checks** (`checks_scale.json`): every resolution and rule reaches 100 % at an infinite radius; the area
+  within grows with the radius; the same crop area at every resolution; the land grid against the IBGE areas;
+  the headline gaps at 30 km; and the exploratory x05 (representative points, 480 m cells, April register)
+  against the new values.
+
+## 10. Using the system: typology and mandate ruler
+
+`bbp demo` (`demo` in `pipeline.yaml`).
+
+* **Typology.** Each intermediate region is described by the composition of its observed crop area in 2024
+  (MapBiomas Col. 11 statistics and the second-crop layer): soybean, second-season corn, sugarcane, coffee,
+  citrus, cotton (both seasons), rice and other crops (classes 41, 48, 35). Second-season corn is a season of its
+  own, so the parts are shares of the area cropped over the two seasons. Regions with less than 10 kha of crops
+  are left out ("minor agriculture"). Parts below 0.1 % of a region's crop area are rounded zeros, replaced
+  multiplicatively by δ = 0.65 × 0.1 %; the compositions are transformed by the centred log-ratio (CLR), so
+  Euclidean distance is the Aitchison distance. Ward's clustering on the CLR coordinates; the number of types is
+  the most stable partition (largest adjusted Rand index between Ward and k-means, fixed seed) among k = 2–12
+  whose smallest type holds at least 10 regions, ties within 0.02 going to the larger mean silhouette (the
+  silhouette alone keeps growing with k on these data). Each region is crossed with the share of its crops within
+  reach of each family (`reach_units`), its plants and its N1 (observed variant, ref factors). Priority regions:
+  N1 in the top quartile and less than 25 % of all crops within 30 km of a biogas plant.
+* **Mandate ruler.** Targets and volumes as stated by the acts (`demo.mandate.targets`, each with its act, URL
+  and access date): 0.5 % in 2026 = 504.8 thousand m³/d (CNPE Res. 4/2026, art. 3) and 1 % in 2027 =
+  995.2 thousand m³/d (MME Ordinance 942/2026, public consultation). The MME's indicative 3, 4 and 5 % for
+  2028–2030 have no official volume and get one from the 2027 base (volume / %), flagged `derived`. No official
+  target exists for 2035. Flows: ANP authorised capacity and production at the snapshot (§7). Stock: the N1 of
+  the crop residues within r km of existing plants, per municipality N1 × the share of its crop area within r km
+  (`reach_hist`), with the factor envelope — theoretical methane, drawn apart from the flows, not a supply.
+* **Checks** (`checks_demo.json`): zero replacement closes every composition; CLR rows sum to zero; the chosen k
+  lies inside the range and its smallest type is large enough; every official volume has its act, URL and access
+  date; the bases implied by the two official volumes agree within 5 %; the stock lies within its envelope and
+  below the national N1.
+
+## 11. Municipal sanitation (platform feed, not part of the paper)
 
 `bbp run sanitation` builds one series of urban solid waste, sewage and
 population per municipality from the two federal sanitation surveys. It feeds

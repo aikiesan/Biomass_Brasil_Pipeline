@@ -1,0 +1,1669 @@
+"""Exploratory figures: the processing plants and what lies around them (`bbp explore`).
+
+Drawn in the house style (bbp.figstyle, NIPE cartography) at final size, so any of them can move into the
+paper as is; every element is also written on its own (data/paper/explore/panels/<figure>/), with its place
+in layout.json, for assembling figures by hand. Inputs: data/interim/plants.parquet (bbp.plants) and the
+reach tables (bbp.reach); the land cover of Fig 1 as ground.
+
+  x01  plants by family over the land cover each one draws on (Brazil, six maps)
+  x02  São Paulo sugarcane mills: catchments and the radius each mill needs (after Cervi et al. 2019)
+  x03  mill catchments: required radius, cane area by radius, supply ratio, competition
+  x04  distance from every crop cell to the nearest plant: curves and shares within 10–100 km
+  x05  the MAUP access test: the same land "within reach" at pixel, municipality and region level
+  x06  intermediate regions: share of crop area within reach (maps)
+  x07  intermediate-region typology (bbp demo): types, share within reach, N1 against reach, priorities
+  x08  registers compared (ANP, CONAB, MapBiomas/EPE) and the biomethane plants
+  x08c the biomethane mandate ruler (bbp demo): targets, ANP flows, the stock within reach
+"""
+
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+import pandas as pd
+
+from bbp import figstyle as fs
+from bbp.cartography import MAP_CRS
+from bbp.checks import CheckLog
+from bbp.config import Config
+from bbp.figstyle import Canvas, map_frame
+
+log = logging.getLogger("bbp")
+
+PLANT_INK = "#141414"
+CONSTRUCTION = "white"
+PAIR_LABEL = {
+    "sugarcane|sugarcane_mill": "Sugarcane → sugarcane mill",
+    "sugarcane|biomass_power|bagasse": "Sugarcane → bagasse power plant",
+    "corn_2nd|corn_ethanol": "2nd-season corn → corn ethanol",
+    "soybean|biodiesel": "Soybean → biodiesel plant",
+    "soy_all|biogas": "Soybean → biogas plant",
+    "pasture|slaughterhouse": "Pasture → slaughterhouse",
+    "all_crops|biogas": "All crops → biogas plant",
+    "all_crops|biomethane": "All crops → biomethane plant",
+}
+PAIR_SHORT = {
+    "sugarcane|sugarcane_mill": "Cane → mill", "sugarcane|biomass_power|bagasse": "Cane → bagasse power",
+    "corn_2nd|corn_ethanol": "2nd corn → corn ethanol", "soybean|biodiesel": "Soybean → biodiesel",
+    "soy_all|biogas": "Soybean → biogas", "pasture|slaughterhouse": "Pasture → slaughterhouse",
+    "all_crops|biogas": "All crops → biogas", "all_crops|biomethane": "All crops → biomethane",
+}
+PAIR_COLOR = {
+    "sugarcane|sugarcane_mill": fs.CROP_COLORS["sugarcane"], "sugarcane|biomass_power|bagasse": "#7fc9a8",
+    "corn_2nd|corn_ethanol": fs.CROP_COLORS["corn_2nd"], "soybean|biodiesel": fs.CROP_COLORS["soybean"],
+    "soy_all|biogas": "#7fb3d9", "pasture|slaughterhouse": "#a0784a", "all_crops|biogas": "#555555",
+    "all_crops|biomethane": "#b0b0b0",
+}
+PAIR_LS = {"sugarcane|biomass_power|bagasse": (0, (3, 1.2)), "soy_all|biogas": (0, (3, 1.2)),
+           "all_crops|biomethane": (0, (1, 1))}
+LEVEL_STYLE = {"pixel": ("#1a1a1a", "-", "o"), "municipality": ("#c1121f", (0, (3, 1.2)), "s"),
+               "intermediate region": ("#6a6a6a", (0, (1, 1)), "^")}
+EXPLORE = {}                                             # key: (file name, function)
+
+
+def register(key: str, name: str):
+    def deco(func):
+        EXPLORE[key] = (name, func)
+        return func
+    return deco
+
+
+# ---------------------------------------------------------------------------
+# context loaded once
+# ---------------------------------------------------------------------------
+class Ctx:
+    def __init__(self, cfg: Config, ck: CheckLog, data=None):
+        from bbp.figures import _Data, landcover_display
+        from bbp.plants import load_plants
+
+        self.cfg, self.ck = cfg, ck
+        self.data = data if data is not None else _Data(cfg, ck)
+        self.g, self.states, self.country, self.ext = self.data.base()
+        self.year = int((cfg.section("paper").get("fig1") or {}).get("year", cfg.years[-1]))
+        self.disp = landcover_display(cfg, ck, self.year, required=False)
+        p = load_plants(cfg)
+        self.plants = None
+        if p is not None:
+            p = p.to_crs(MAP_CRS)
+            p["x"], p["y"] = p.geometry.x, p.geometry.y
+            p["family"] = p["family"].astype(str)
+            self.plants = p
+        self.proc = cfg.data_dir / "processed"
+        self._t = {}
+
+    def t(self, name: str) -> pd.DataFrame | None:
+        if name not in self._t:
+            p = self.proc / f"reach_{name}.parquet"
+            self._t[name] = pd.read_parquet(p) if p.exists() else None
+        return self._t[name]
+
+    def d(self, name: str) -> pd.DataFrame | None:
+        """A table of bbp demo (data/processed/demo_<name>.parquet)."""
+        p = self.proc / f"demo_{name}.parquet"
+        return pd.read_parquet(p) if p.exists() else None
+
+    def regions(self):
+        if not hasattr(self, "_rg"):
+            import shapely
+
+            rg = self.g.dissolve(by="cd_rgint", as_index=False)[["cd_rgint", "geometry"]]
+            if hasattr(shapely, "coverage_simplify"):          # shared borders stay shared; ~1/3 mm at 1:80M
+                rg["geometry"] = shapely.coverage_simplify(rg.geometry.values, tolerance=3000.0)
+            self._rg = rg
+        return self._rg
+
+
+def focus_lut(keys, strength: float = 0.30, override: dict | None = None) -> np.ndarray:
+    """Land-cover lookup with `keys` in colour and everything else as light grey context."""
+    from matplotlib.colors import to_rgba
+
+    from bbp import landcover as lc
+    from bbp.cartography import ghost_lut, landcover_rgba
+
+    lut = landcover_rgba(fs.LANDCOVER_COLORS)
+    out = ghost_lut(lut, strength)
+    for k in keys:
+        col = (override or {}).get(k)
+        out[lc.CODE[k]] = np.round(np.array(to_rgba(col)) * 255).astype(np.uint8) if col else lut[lc.CODE[k]]
+    return out
+
+
+def base_map(ctx: Ctx, a, ext, S, lut, state_lw: float = 0.25, regions: bool = False):
+    from bbp.figures import _landcover_layer
+
+    if not _landcover_layer(a, ctx.disp, ext, S, lut):
+        ctx.country.plot(ax=a, color="#efefef", linewidth=0, zorder=1)
+    if regions:
+        ctx.regions().boundary.plot(ax=a, color="white", linewidth=state_lw * 0.6, zorder=2.6)
+    ctx.states.boundary.plot(ax=a, color="#6b6b6b", linewidth=state_lw, zorder=3)
+    ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=state_lw * 1.6, zorder=3.2)
+    map_frame(a, ext)
+
+
+def size_of(cap, ref: float, s_ref: float = 9.0, s_min: float = 1.6):
+    """Marker area (pt²) proportional to capacity; `ref` capacity gets `s_ref`."""
+    c = np.asarray(cap, dtype=float)
+    return np.where(np.isfinite(c) & (c > 0), np.maximum(s_ref * c / ref, s_min), s_min * 1.4)
+
+
+def plant_points(a, df, sizes, marker="o", z=6, lw=0.3):
+    op = df["operating"].fillna(True).astype(bool).to_numpy()
+    for flag, fc in ((True, PLANT_INK), (False, CONSTRUCTION)):
+        m = op == flag
+        if m.any():
+            a.scatter(df["x"].to_numpy()[m], df["y"].to_numpy()[m], s=np.asarray(sizes)[m], marker=marker, c=fc,
+                      edgecolors="white" if flag else PLANT_INK, linewidths=lw if flag else 0.45, zorder=z)
+
+
+def flow_legend(cv: Canvas, x: float, y_top: float, width: float, entries, nrow: int | None = None,
+                fontsize: float = fs.FS_ITEM - 0.4):
+    """Entries [(patch, colour, label) | (marker, (marker, size pt²), label)] in two columns (or one)."""
+    from matplotlib.patches import Rectangle
+
+    nrow = nrow or 4
+    cw = width / 2
+    for k, (kind, spec, text) in enumerate(entries):
+        cx, cy = x + (k // nrow) * cw, y_top - (k % nrow) * fs.ROW
+        if kind == "patch":
+            cv.ov.add_patch(Rectangle((cx, cy - 0.75), 3.4, 1.5, fc=spec, ec="#7a7a7a", lw=0.35))
+        else:
+            mk, sz = spec
+            cv.ov.scatter([cx + 1.7], [cy], s=sz, marker=mk, c=PLANT_INK, edgecolors="white", linewidths=0.3)
+        cv.text(cx + 4.4, cy, text, fontsize=fontsize, va="center")
+
+
+def panel_title(cv: Canvas, x, y, text, size=None):
+    cv.text(x, y, text, fontsize=size or fs.FS_TITLE + 0.2, fontweight="bold", va="bottom")
+
+
+def letter(i: int) -> str:
+    return "abcdefghijkl"[i]
+
+
+def axis_style(ax, grid_y: bool = True):
+    ax.tick_params(length=2)
+    if grid_y:
+        ax.grid(axis="y", color=fs.FAINT, lw=0.4)
+
+
+def _pct(v: float) -> str:
+    return f"{100 * v:.0f} %"
+
+
+# ---------------------------------------------------------------------------
+# x01 — plants by family, Brazil
+# ---------------------------------------------------------------------------
+X01_PANELS = [
+    # family, title, focus groups, override colours, size reference (capacity, label), subtype markers
+    ("sugarcane_mill", "Sugarcane mills (ANP)", ("sugarcane",), None, (3.0e6, "3 Mt cane/season"), None),
+    ("corn_ethanol", "Corn ethanol plants (ANP)", ("soy_corn2",), None, (5.0e5, "0.5 Mt corn/yr"), None),
+    ("biodiesel", "Biodiesel plants (ANP)", ("soybean", "soy_corn2", "soy_cotton2"),
+     {"soy_corn2": fs.CROP_COLORS["soybean"], "soy_cotton2": fs.CROP_COLORS["soybean"]}, (1000, "1,000 m³/day"), None),
+    ("biogas", "Biogas plants (CIBiogás)", ("soybean", "soy_corn2", "soy_cotton2", "sugarcane", "coffee", "citrus",
+                                             "cotton", "rice", "other_crops"), None, None,
+     {"agriculture": "o", "industry": "s", "urban": "^"}),
+    ("biomass_power", "Biomass power plants (ANEEL)", ("sugarcane", "plantation"),
+     {"plantation": "#7a6a4f"}, (5.0e4, "50 MW"), {"bagasse": "^", "forestry": "s", "biogas": "o",
+                                                    "urban": "D", "agro_other": "v"}),
+    ("slaughterhouse", "Slaughterhouses (SIF)", ("pasture",), {"pasture": "#c9a66b"},
+     None, None),
+]
+S_REF = {"sugarcane_mill": 5.0, "corn_ethanol": 5.0, "biodiesel": 7.0, "biomass_power": 4.0}
+SUBTYPE_LABEL = {"agriculture": "Agro-livestock", "industry": "Industry", "urban": "Urban waste, sewage",
+                 "bagasse": "Bagasse", "forestry": "Wood, liquor", "biogas": "Biogas",
+                 "agro_other": "Other agro"}
+
+
+@register("x01", "x01_plants_by_family")
+def x01_plants(ctx: Ctx, host=None, start: int = 0):
+    from bbp.figures import nice_scale
+
+    if ctx.plants is None:
+        return None
+    P = ctx.plants
+    ext = ctx.ext
+    FW, gap, ncol = fs.FULL_W, 2.0, 3
+    w = (FW - 2.0 - gap * (ncol - 1)) / ncol
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT, LG = 4.2, 4 * fs.ROW + 1.6
+    FH = 2 * (MH + TT + LG) + 9.0
+    cv = fs.canvas(FW, FH, host)
+    for i, (fam, title, focus, override, ref, subs) in enumerate(X01_PANELS):
+        col, row = i % ncol, i // ncol
+        x = 1.0 + col * (w + gap) + (w - MW) / 2
+        y = FH - (row + 1) * (MH + TT) - row * LG + 0.3
+        a = cv.map_ax(x, y, ext, S)
+        base_map(ctx, a, ext, S, focus_lut(focus, override=override), state_lw=0.18)
+        df = P[P["family"] == fam].sort_values("capacity", ascending=False, na_position="last")
+        sizes = size_of(df["capacity"], ref[0], S_REF.get(fam, 9.0)) if ref else np.full(len(df), 2.6)
+        if subs:
+            for st, mk in subs.items():
+                m = (df["subtype"] == st).to_numpy()
+                plant_points(a, df[m], sizes[m], marker=mk)
+        else:
+            plant_points(a, df, sizes)
+        n_op = int(df["operating"].fillna(True).astype(bool).sum())
+        panel_title(cv, x, y + MH + 0.4, f"({letter(start + i)}) {title}")
+        # legend under the map, in two columns
+        lab = {"sugarcane": "Sugarcane", "soy_corn2": "Soy + 2nd-season corn", "soybean": "Soybean, all seasons",
+               "pasture": "Pasture", "plantation": "Forest plantation"}
+        entries = [("patch", (override or {}).get(k, fs.LANDCOVER_COLORS[k]), lab[k]) for k in focus if k in lab]
+        if fam == "biodiesel":
+            entries = entries[:1]
+        if fam == "biogas":
+            entries = [("patch", fs.LANDCOVER_COLORS["soybean"], "Crops (Fig 1 colours)")]
+        for st, mk in (subs or {}).items():
+            k = int((df["subtype"] == st).sum())
+            if k:
+                entries.append(("marker", (mk, 5.0), f"{SUBTYPE_LABEL[st]} ({k})"))
+        if ref:
+            entries.append(("marker", ("o", float(size_of([ref[0]], ref[0], S_REF.get(fam, 9.0))[0])), ref[1]))
+        flow_legend(cv, x, y - 1.6, MW, entries)
+        cv.text(x + MW - 0.5, y + MH - 0.5, f"{len(df)} plants\n{n_op} operating", fontsize=fs.FS_ITEM - 0.3,
+                ha="right", va="top", color=fs.MUTED, linespacing=1.2)
+        cv.panel(f"{letter(start + i)}_{fam}", x, y - LG + 0.4, x + MW, y + MH + TT - 0.3)
+    # strip: plant symbols, scale, credits
+    y0 = 0.4
+    cv.north(4.0, y0 + 3.4)
+    cv.scale(7.5, y0 + 3.2, S, seg_km=1000, n=1, bh=0.7)
+    ox = 7.5 + 1000e3 / S + 8.0
+    cv.ov.scatter([ox], [y0 + 6.6], s=6, c=PLANT_INK, edgecolors="white", linewidths=0.3)
+    cv.text(ox + 1.8, y0 + 6.6, "Operating (marker area proportional to capacity)", va="center")
+    cv.ov.scatter([ox + 62.0], [y0 + 6.6], s=6, c=CONSTRUCTION, edgecolors=PLANT_INK, linewidths=0.45)
+    cv.text(ox + 63.8, y0 + 6.6, "Construction, expansion, inactive", va="center")
+    cv.text(ox, y0 + 3.6, f"Ground: MapBiomas Col. 11 {ctx.year}, the crops each family draws on in colour. "
+            "Data: ANP; CIBiogás, ANEEL (via MapBiomas); MAPA SIF.", va="center",
+            fontsize=fs.FS_CRED, color=fs.MUTED)
+    cv.text(ox, y0 + 1.2, fs.CREDIT_PROJ + ". " + fs.CREDIT_CARTO, va="center", fontsize=fs.FS_CRED,
+            color=fs.MUTED)
+    cv.panel("legend_strip", 0.5, 0.0, FW - 0.5, 9.0)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x02 — São Paulo mills: catchment circles and required radius
+# ---------------------------------------------------------------------------
+RADIUS_CLASSES = [(0, 10, "≤ 10 km"), (10, 20, "10–20 km"), (20, 30, "20–30 km"), (30, 50, "30–50 km"),
+                  (50, np.inf, "> 50 km")]
+RADIUS_COLORS = ["#08306b", "#2f7fbf", "#8cc2e0", "#f4a259", "#c1121f"]
+
+
+@register("x02", "x02_sp_mills_catchments")
+def x02_sp_mills(ctx: Ctx, host=None):
+    import geopandas as gpd
+
+    from bbp.figures import nice_scale
+
+    mills = ctx.t("mills")
+    if mills is None or ctx.plants is None:
+        return None
+    radius = 20.0
+    sp = ctx.states[ctx.states["uf"] == "SP"]
+    b = sp.total_bounds
+    pad = 15e3
+    ext = (b[0] - pad, b[2] + pad, b[1] - pad, b[3] + pad)
+    FW, gap = fs.FULL_W, 2.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w, 500.0)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT = 4.2
+    LEG = 17.0
+    FH = MH + TT + LEG
+    cv = fs.canvas(FW, FH, host)
+    m = gpd.GeoDataFrame(mills, geometry=gpd.points_from_xy(mills["lon"], mills["lat"]), crs="EPSG:4674")
+    m = m.to_crs(MAP_CRS)
+    m["x"], m["y"] = m.geometry.x, m.geometry.y
+    m = m[(m["x"] > ext[0]) & (m["x"] < ext[1]) & (m["y"] > ext[2]) & (m["y"] < ext[3])]
+    op = ctx.plants.set_index("plant_id")["operating"]
+    m["operating"] = m["plant_id"].map(op)
+    in_sp = m[m["uf"] == "SP"]
+    lut_c = focus_lut(("sugarcane",))
+    focus = sp.union_all()
+    from bbp.figures import _landcover_layer
+
+    for i in range(2):
+        x = 1.0 + i * (w + gap)
+        y = LEG
+        a = cv.map_ax(x, y, ext, S)
+        if not _landcover_layer(a, ctx.disp, ext, S, lut_c, focus=focus):
+            ctx.country.plot(ax=a, color="#efefef", lw=0)
+        ctx.g.cx[ext[0]:ext[1], ext[2]:ext[3]].boundary.plot(ax=a, color="white", linewidth=0.1, zorder=2.5)
+        ctx.states.boundary.plot(ax=a, color="#3d3d3d", linewidth=0.4, zorder=3.4)
+        if i == 0:
+            buf = gpd.GeoSeries(gpd.points_from_xy(m["x"], m["y"]), crs=MAP_CRS).buffer(radius * 1000, 64)
+            buf.boundary.plot(ax=a, color=PLANT_INK, linewidth=0.18, alpha=0.55, zorder=4)
+            plant_points(a, m.assign(x=m["x"], y=m["y"]), size_of(m["capacity"], 3.0e6, 7.0), z=6)
+            panel_title(cv, x, y + MH + 0.4, f"(a) Sugarcane mills and {radius:.0f} km catchments")
+        else:
+            rr = m["required_radius_km"].to_numpy()
+            for (lo, hi, _lab), col in zip(RADIUS_CLASSES, RADIUS_COLORS, strict=True):
+                sel = (rr > lo) & (rr <= hi) if lo > 0 else (rr <= hi)
+                a.scatter(m["x"][sel], m["y"][sel], s=size_of(m["capacity"][sel], 3.0e6, 7.0), c=col,
+                          edgecolors="white", linewidths=0.3, zorder=6)
+            na = ~np.isfinite(rr) & m["capacity"].isna().to_numpy()
+            a.scatter(m["x"][na], m["y"][na], s=2.2, c="#9a9a9a", edgecolors="white", linewidths=0.2, zorder=5)
+            panel_title(cv, x, y + MH + 0.4, "(b) Radius each mill needs for its crushing class")
+        map_frame(a, ext)
+        cv.panel(f"{letter(i)}_{'catchments' if i == 0 else 'required_radius'}", x, y, x + MW, y + MH + TT - 0.3)
+    # legend row
+    ly = LEG - 4.0
+    rows_a = [("patch", {"fc": fs.LANDCOVER_COLORS["sugarcane"], "ec": "#7a7a7a"}, f"Sugarcane {ctx.year} (SP)"),
+              ("line", (PLANT_INK, 0.3), f"{radius:.0f} km around each mill")]
+    cv.legend(1.0, ly, [("", rows_a)], header=None)
+    for k, (frac, lab) in enumerate(((1 / 3, "≤ 1.5 Mt"), (1.0, "2.5–3.5 Mt"), (6.5 / 3, "> 5.5 Mt"))):
+        cx = 36.0 + k * 9.0
+        cv.ov.scatter([cx], [ly], s=size_of([3.0e6 * frac], 3.0e6, 7.0)[0], c=PLANT_INK, edgecolors="white", lw=0.3)
+        cv.text(cx, ly - 2.2, lab, ha="center", va="top", fontsize=fs.FS_ITEM - 0.4)
+    cv.text(36.0 - 4.0, ly + 1.9, "Crushing class (cane/season)", fontsize=fs.FS_ITEM - 0.2, va="bottom")
+    rows_b = [("dot", (6, c, "white", 0.3), lab) for (_, _, lab), c in zip(RADIUS_CLASSES, RADIUS_COLORS, strict=True)]
+    x_b = 1.0 + w + gap
+    yy = cv.legend(x_b, ly + 1.2, [("Required radius (cane at "
+                                    f"{ctx.cfg.section('plants')['reach'].get('cane_yield_t_ha', 75)} t/ha)",
+                                    rows_b[:3])], header=None)
+    cv.legend(x_b + 24.0, ly + 1.2 - fs.ROW, [("", rows_b[3:])], header=None)
+    del yy
+    med = float(np.nanmedian(in_sp["required_radius_km"].replace(np.inf, np.nan)))
+    cv.text(x_b + 46.0, ly - 0.2, f"SP: {len(in_sp)} mills\nmedian {med:.0f} km", fontsize=fs.FS_ITEM, va="center",
+            linespacing=1.25)
+    cv.scale(1.0, 1.4, S, seg_km=100, n=1, bh=0.6, compact=True)
+    cv.text(22.0, 0.8, f"1:{S * 1000:,.0f}. Great-circle distance from each mill to every 30 m cane pixel "
+            "(all states). Data: ANP; MapBiomas Col. 11. CP2b NIPE/Unicamp",
+            fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom")
+    cv.panel("legend", 0.5, 0.0, FW - 0.5, LEG - 0.5)
+    ctx.ck.add("x02_sp", True, f"{len(in_sp)} SP mills; median required radius {med:.1f} km", med)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x03 — mill catchments (after Cervi et al. 2019)
+# ---------------------------------------------------------------------------
+COMP_COLORS = ["#d9d9d9", "#c7e9c0", "#74c476", "#31a354", "#006d2c", "#00441b", "#002a10"]
+
+
+@register("x03", "x03_mill_catchments")
+def x03_mill_catchments(ctx: Ctx, host=None):
+    mills, comp = ctx.t("mills"), ctx.t("competition")
+    if mills is None:
+        return None
+    yield_t = ctx.cfg.section("plants")["reach"].get("cane_yield_t_ha", 75)
+    FW, FH = fs.FULL_W, 108.0
+    cv = fs.canvas(FW, FH, host)
+    W, H = 52.0, 32.0
+    X = (12.0, 12.0 + W + 15.0)
+    Y = (FH - 5.5 - H, FH - 5.5 - H - 23.0 - H)
+    sp = mills["uf"] == "SP"
+    green, light = fs.CROP_COLORS["sugarcane"], "#a8dcc6"
+
+    # (a) required radius
+    a = cv.ax(X[0], Y[0], W, H)
+    rr = mills["required_radius_km"].replace(np.inf, 99).clip(upper=62.4)
+    bins = np.arange(0, 65, 2.5)
+    a.hist([rr[sp].dropna(), rr[~sp].dropna()], bins=bins, stacked=True, color=[green, light], edgecolor="white",
+           linewidth=0.3, label=["São Paulo", "Other states"])
+    for j, (v, c, ls, who) in enumerate((
+            (np.nanmedian(mills.loc[sp, "required_radius_km"]), green, "-", "SP"),
+            (np.nanmedian(mills.loc[~sp, "required_radius_km"].replace(np.inf, np.nan)), "#5f9e86", "--", "others"))):
+        a.axvline(v, color=c, lw=0.7, ls=ls)
+        a.text(v + 0.6, a.get_ylim()[1] * (0.97 - 0.1 * j), f"median {who} {v:.0f} km", fontsize=fs.FS_TEXT - 0.6,
+               va="top", color=c)
+    a.set_xlim(0, 65)
+    a.set_xticks([0, 10, 20, 30, 40, 50, 60], ["0", "10", "20", "30", "40", "50", "≥ 60"])
+    a.set_xlabel("Radius needed for the crushing class (km)")
+    a.set_ylabel("Mills")
+    a.legend(loc="center right", fontsize=fs.FS_ITEM, handlelength=1.2, borderaxespad=0.2)
+    axis_style(a)
+    cv.text(X[0] - 9.5, Y[0] + H + 1.5, f"(a) Radius each mill needs (cane at {yield_t} t/ha)",
+            fontsize=fs.FS_LABEL, fontweight="bold", va="bottom")
+    cv.panel("a_required_radius", X[0] - 10.5, Y[0] - 8.5, X[0] + W, Y[0] + H + 5.0)
+
+    # (b) cane within r, by radius
+    b = cv.ax(X[1], Y[0], W, H)
+    radii = [10, 20, 30, 50, 75, 100]
+    vals = [mills[f"cane_ha_{r}km"].to_numpy() / 1e3 for r in radii]
+    bp = b.boxplot(vals, positions=range(len(radii)), widths=0.55, patch_artist=True, showfliers=False,
+                   medianprops={"color": fs.INK, "lw": 0.8}, whiskerprops={"lw": 0.5, "color": fs.MUTED},
+                   capprops={"lw": 0.5, "color": fs.MUTED}, boxprops={"lw": 0.5, "edgecolor": fs.MUTED})
+    for p_ in bp["boxes"]:
+        p_.set_facecolor(light)
+    need = np.nanmedian(mills["need_ha"]) / 1e3
+    b.axhline(need, color=fs.DETAIL, lw=0.7, ls=(0, (3, 1.2)))
+    b.text(len(radii) - 0.6, need * 1.12, f"median need {need:.0f} kha", color=fs.DETAIL, fontsize=fs.FS_TEXT - 0.4,
+           ha="right", va="bottom")
+    b.set_yscale("log")
+    b.set_xticks(range(len(radii)), [str(r) for r in radii])
+    b.set_xlabel("Radius around the mill (km)")
+    b.set_ylabel("Sugarcane within the radius (kha)")
+    axis_style(b)
+    cv.text(X[1] - 9.5, Y[0] + H + 1.5, "(b) Cane area around each mill", fontsize=fs.FS_LABEL, fontweight="bold",
+            va="bottom")
+    cv.panel("b_cane_by_radius", X[1] - 10.5, Y[0] - 8.5, X[1] + W + 1.0, Y[0] + H + 5.0)
+
+    # (c) supply ratio at 30 km by crushing class
+    c = cv.ax(X[0], Y[1], W, H)
+    classes = sorted(mills["capacity"].dropna().unique())
+    rng = np.random.default_rng(7)
+    for i, cap in enumerate(classes):
+        s = mills[mills["capacity"] == cap]
+        v = s["supply_ratio_30km"].clip(lower=0.01, upper=200).to_numpy()
+        xs = i + rng.uniform(-0.28, 0.28, len(v))
+        c.scatter(xs, v, s=3.5, c=np.where(s["uf"] == "SP", green, "#7a7a7a"), edgecolors="white", linewidths=0.2,
+                  zorder=3)
+        c.plot([i - 0.32, i + 0.32], [np.median(v)] * 2, color=fs.INK, lw=0.8, zorder=4)
+    c.axhline(1, color=fs.DETAIL, lw=0.7, ls=(0, (3, 1.2)))
+    c.set_yscale("log")
+    c.set_xticks(range(len(classes)), [f"{v / 1e6:g}" for v in classes])
+    c.set_xlabel("Crushing class midpoint (Mt cane/season)")
+    c.set_ylabel("Cane within 30 km / cane needed")
+    short = (mills["supply_ratio_30km"] < 1).mean()
+    c.text(len(classes) - 0.5, 0.012, f"{_pct(short)} of mills below 1", ha="right", va="bottom",
+           fontsize=fs.FS_TEXT - 0.4, color=fs.DETAIL)
+    axis_style(c)
+    cv.text(X[0] - 9.5, Y[1] + H + 7.0, "(c) Supply ratio at 30 km (green: SP)", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="bottom")
+    cv.panel("c_supply_ratio", X[0] - 10.5, Y[1] - 8.5, X[0] + W, Y[1] + H + 10.5)
+
+    # (d) competition
+    d = cv.ax(X[1], Y[1], W, H)
+    if comp is not None and len(comp):
+        cp = comp[comp["pair"] == "sugarcane|sugarcane_mill"]
+        cp = cp.assign(n_plants=cp["n_plants"].clip(upper=6))           # 6 or more mills in one class
+        tab = cp.pivot_table(index="radius_km", columns="n_plants", values="area_ha", aggfunc="sum").fillna(0)
+        tab = tab.div(tab.sum(axis=1), axis=0)
+        bottom = np.zeros(len(tab))
+        labels = {0: "none", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6+"}
+        for j, col in enumerate(tab.columns):
+            d.bar(range(len(tab)), tab[col].to_numpy(), bottom=bottom, color=COMP_COLORS[min(j, 6)], width=0.7,
+                  edgecolor="white", linewidth=0.3, label=labels.get(int(col), str(col)))
+            bottom += tab[col].to_numpy()
+        d.set_xticks(range(len(tab)), [f"{r:g}" for r in tab.index])
+        d.set_ylim(0, 1)
+        d.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+        d.set_xlabel("Radius (km)")
+        d.set_ylabel("Share of Brazil's cane area")
+        h_, l_ = d.get_legend_handles_labels()
+        d.legend(h_, l_, title="Mills within the radius", loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=7,
+                 fontsize=fs.FS_ITEM - 0.2, title_fontsize=fs.FS_ITEM, handlelength=0.9, handleheight=0.9,
+                 columnspacing=0.8, handletextpad=0.3, borderaxespad=0.2)
+    cv.text(X[1] - 9.5, Y[1] + H + 7.0, "(d) How many mills compete for the cane", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="bottom")
+    cv.panel("d_competition", X[1] - 10.5, Y[1] - 8.5, FW - 0.5, Y[1] + H + 10.5)
+    cv.text(1.0, 0.8, f"Sugarcane mills: ANP ({len(mills)}; crushing class midpoints). Cane: MapBiomas Col. 11 "
+            f"{ctx.year}, 30 m pixels; great-circle distances. After Cervi et al. (2019).",
+            fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom")
+    ctx.ck.add("x03_supply_ratio_below_1", True, f"{short:.1%} of mills have < their need within 30 km", short)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x04 — distance from every crop cell to the nearest plant
+# ---------------------------------------------------------------------------
+X04_PAIRS = ["sugarcane|sugarcane_mill", "sugarcane|biomass_power|bagasse", "corn_2nd|corn_ethanol",
+             "soybean|biodiesel", "soy_all|biogas", "all_crops|biogas", "pasture|slaughterhouse",
+             "all_crops|biomethane"]
+
+
+@register("x04", "x04_distance_to_plants")
+def x04_distance(ctx: Ctx, host=None, start: int = 0):
+    dist = ctx.t("distance")
+    if dist is None:
+        return None
+    FW, FH = fs.FULL_W, 62.0
+    cv = fs.canvas(FW, FH, host)
+    a = cv.ax(11.0, 9.5, 50.0, FH - 16.0)
+    ends = []
+    shares = {}
+    radii = [10, 20, 30, 50, 100]
+    for pair in X04_PAIRS:
+        t = dist[dist["pair"] == pair].sort_values("bin_km")
+        if t.empty:
+            continue
+        cdf = t["area_ha"].cumsum() / t["area_ha"].sum()
+        x = t["bin_km"].to_numpy() + 1
+        lw = 1.1 if pair in ("sugarcane|sugarcane_mill", "soybean|biodiesel", "corn_2nd|corn_ethanol") else 0.75
+        a.plot(x, cdf, color=PAIR_COLOR[pair], lw=lw, ls=PAIR_LS.get(pair, "-"))
+        k = np.searchsorted(x, 300)
+        ends.append((PAIR_LABEL[pair].split(" → ")[0] + " → " + PAIR_LABEL[pair].split(" → ")[1].replace(" plant", ""),
+                     300, float(cdf.iloc[min(k, len(cdf) - 1)]), PAIR_COLOR[pair]))
+        shares[pair] = [float(cdf.iloc[min(int(r) - 1, len(cdf) - 1)]) for r in radii]
+    for r in (30, 50):
+        a.axvline(r, color=fs.HAIR, lw=0.4, zorder=0)
+    a.set_xlim(0, 300)
+    a.set_ylim(0, 1.0)
+    a.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    a.set_xlabel("Distance to the nearest plant (km)")
+    a.set_ylabel("Share of the crop area (cumulative)")
+    axis_style(a)
+    a.grid(axis="x", color=fs.FAINT, lw=0.4)
+    cv.text(1.0, FH - 1.0, f"({letter(start)}) Crop area by distance to the nearest plant", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="top")
+    # (b) heat table
+    from matplotlib import colormaps
+
+    cmap = colormaps["Greens"]
+    tx, ty = 98.0, FH - 9.0
+    rh, cw = 4.6, 6.6
+    for j, r in enumerate(radii):
+        cv.text(tx + j * cw + cw / 2, ty + 1.2, f"{r} km", ha="center", va="bottom", fontsize=fs.FS_ITEM)
+    for i, pair in enumerate([p for p in X04_PAIRS if p in shares]):
+        yy = ty - (i + 1) * rh
+        cv.text(tx - 1.0, yy + rh / 2, PAIR_SHORT[pair], ha="right", va="center", fontsize=fs.FS_ITEM - 0.2)
+        cv.ov.plot([tx - 31.5, tx - 27.5], [yy + rh / 2] * 2, color=PAIR_COLOR[pair], ls=PAIR_LS.get(pair, "-"),
+                   lw=1.0, solid_capstyle="butt")
+        for j, v in enumerate(shares[pair]):
+            from matplotlib.patches import Rectangle
+
+            cv.ov.add_patch(Rectangle((tx + j * cw, yy), cw - 0.4, rh - 0.4, fc=cmap(0.1 + 0.8 * v), ec="none"))
+            cv.text(tx + j * cw + cw / 2 - 0.2, yy + rh / 2 - 0.2, f"{100 * v:.0f}", ha="center", va="center",
+                    fontsize=fs.FS_ITEM, color="white" if v > 0.55 else fs.INK)
+    cv.text(tx - 31.5, FH - 1.0, f"({letter(start + 1)}) Share within the radius (%)", fontsize=fs.FS_LABEL, fontweight="bold",
+            va="top")
+    for e in ends:
+        a.plot([e[1]], [e[2]], marker="o", ms=2.0, color=e[3], mec="white", mew=0.2, clip_on=False)
+    cv.text(tx - 31.5, 8.0, f"Crop pixels: MapBiomas Col. 11 {ctx.year}, 30 m (2nd-season corn:\nsecond-crop "
+            "layer). Plants operating (ANP, CIBiogás, ANEEL,\nMAPA). Great-circle distance: road distances are longer.",
+            fontsize=fs.FS_CRED, color=fs.MUTED, va="bottom", linespacing=1.3)
+    cv.panel(f"{letter(start)}_cdf", 0.5, 0.0, 64.0, FH - 0.3)
+    cv.panel(f"{letter(start + 1)}_table", 65.5, 0.0, FW - 0.5, FH - 0.3)
+    for pair, v in shares.items():
+        ctx.ck.add(f"x04_{pair}_30km", True, f"{v[2]:.1%} within 30 km, {v[3]:.1%} within 50 km", v[2])
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x05 — MAUP access test
+# ---------------------------------------------------------------------------
+X05_PAIRS = ["sugarcane|sugarcane_mill", "corn_2nd|corn_ethanol", "soybean|biodiesel", "all_crops|biogas",
+             "all_crops|biomethane"]
+X05_RULE = "area_fraction"           # bbp.scale: the main rule (centroid and representative point: sensitivity)
+
+
+@register("x05", "x05_maup_access")
+def x05_maup(ctx: Ctx, host=None):
+    sc = ctx.t("scale")
+    if sc is None:
+        return None
+    sc = sc[np.isfinite(sc["radius_km"]) & sc["rule"].isin(["pixel", X05_RULE])]
+    maup = sc.assign(level=sc["resolution"].map({"pixel": "pixel", "municipality": "municipality",
+                                                  "rgint": "intermediate region"}))
+    FW = fs.FULL_W
+    ncol, w, h, gx, gy = 3, 32.0, 26.0, 11.0, 13.0
+    FH = 2 * (h + gy) + 11.0
+    cv = fs.canvas(FW, FH, host)
+    x0 = 11.0
+    for i, pair in enumerate(X05_PAIRS):
+        t = maup[maup["pair"] == pair]
+        if t.empty:
+            continue
+        col, row = i % ncol, i // ncol
+        x, y = x0 + col * (w + gx), FH - 6.0 - (row + 1) * h - row * gy
+        a = cv.ax(x, y, w, h)
+        for lev, (c, ls, mk) in LEVEL_STYLE.items():
+            s = t[t["level"] == lev].sort_values("radius_km")
+            a.plot(s["radius_km"], s["share"], color=c, ls=ls, marker=mk, ms=2.2, lw=0.8, mec="white", mew=0.2,
+                   label=lev.capitalize())
+        s30 = t[t["radius_km"] == 30].set_index("level")["share"]
+        lo, hi = (s30.min(), s30.max()) if len(s30) == 3 else (0, 0)
+        if hi - lo >= 0.03:
+            a.annotate("", (30, hi), (30, lo), arrowprops={"arrowstyle": "<->", "lw": 0.5, "color": fs.DETAIL,
+                                                             "shrinkA": 0, "shrinkB": 0})
+            a.text(33, (lo + hi) / 2, f"{100 * (hi - lo):.0f} pp", color=fs.DETAIL, fontsize=fs.FS_TEXT - 0.5,
+                   va="center", zorder=6, bbox={"fc": "white", "ec": "none", "pad": 0.6, "alpha": 0.9})
+        elif len(s30):
+            a.text(0.97, 0.94, "at 30 km all levels agree within 3 pp", transform=a.transAxes, ha="right", va="top",
+                   fontsize=fs.FS_TEXT - 1.0, color=fs.MUTED)
+        a.set_xlim(0, 105)
+        a.set_ylim(0, 1)
+        a.set_xticks([10, 30, 50, 75, 100])
+        a.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f}")
+        axis_style(a)
+        if col == 0:
+            a.set_ylabel("Area within reach (%)")
+        if row == 1:
+            a.set_xlabel("Radius (km)")
+        cv.text(x - 9.5, y + h + 1.3, f"({letter(i)}) {PAIR_LABEL[pair]}", fontsize=fs.FS_TITLE + 0.2,
+                fontweight="bold", va="bottom")
+        cv.panel(f"{letter(i)}_{pair.replace('|', '_')}", x - 10.5, y - 7.0, x + w + 1.0, y + h + 5.0)
+    rows = [("line", (c, 0.8, ls), f"from the {lev}" + (" (30 m, true)" if lev == "pixel" else "'s land"))
+            for lev, (c, ls, _) in LEVEL_STYLE.items()]
+    cv.legend(x0 - 9.5, 9.0, [("Distance measured", rows)], header=None)
+    cv.text(58.0, 5.0, "Same land, same plants. A unit's crop is spread like its land: its share within\nreach is "
+            "the share of its land within the radius (bbp scale). Red: the gap at 30 km\nbetween reading reach "
+            "from statistical units and from the 30 m pixels.", fontsize=fs.FS_CRED, color=fs.MUTED, va="center",
+            linespacing=1.3)
+    cv.panel("legend", 0.5, 0.0, FW - 0.5, 10.5)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x06 — intermediate regions: share within reach
+# ---------------------------------------------------------------------------
+X06_MAPS = [("sugarcane|sugarcane_mill", 30, "Sugarcane within 30 km of a mill"),
+            ("soybean|biodiesel", 50, "Soybean within 50 km of a biodiesel plant"),
+            ("corn_2nd|corn_ethanol", 50, "2nd-season corn within 50 km of a corn ethanol plant"),
+            ("all_crops|biogas", 30, "All crops within 30 km of a biogas plant")]
+SHARE_EDGES = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0001]
+SHARE_LABELS = ["< 10 %", "10–25 %", "25–50 %", "50–75 %", "75–90 %", "≥ 90 %"]
+
+
+@register("x06", "x06_regions_within_reach")
+def x06_regions(ctx: Ctx, host=None):
+    from matplotlib import colormaps
+
+    from bbp.figures import nice_scale
+
+    rgt = ctx.t("rgint")
+    if rgt is None:
+        return None
+    rg = ctx.regions()
+    ext = ctx.ext
+    FW, gap = fs.FULL_W, 3.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT, LEG = 4.4, 14.5
+    FH = 2 * (MH + TT) + LEG
+    cv = fs.canvas(FW, FH, host)
+    cmap = colormaps["YlGnBu"]
+    colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
+    min_ha = 5_000.0
+    for i, (pair, r, title) in enumerate(X06_MAPS):
+        col, row = i % 2, i // 2
+        x = 1.0 + col * (w + gap)
+        y = FH - (row + 1) * (MH + TT) + 0.2
+        a = cv.map_ax(x, y, ext, S)
+        t = rgt[rgt["pair"] == pair].set_index("cd_rgint")
+        share = t[f"within_{r}km_ha"] / t["area_ha"]
+        m = rg.assign(share=rg["cd_rgint"].map(share), area=rg["cd_rgint"].map(t["area_ha"]).fillna(0))
+        little = m["area"] < min_ha
+        m[little].plot(ax=a, color="#f3f3f3", linewidth=0, zorder=1)
+        cls = np.digitize(m.loc[~little, "share"].fillna(0), SHARE_EDGES[1:-1])
+        m.loc[~little].assign(c=[colors[k] for k in cls]).plot(ax=a, color=[colors[k] for k in cls], linewidth=0,
+                                                                zorder=1.2)
+        rg.boundary.plot(ax=a, color="white", linewidth=0.18, zorder=2)
+        ctx.states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.28, zorder=3)
+        ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+        fam = pair.split("|")[1]
+        sub = pair.split("|")[2] if pair.count("|") > 1 else None
+        if ctx.plants is not None:
+            P = ctx.plants[(ctx.plants["family"] == fam) & ctx.plants["operating"].fillna(True).astype(bool)]
+            if sub:
+                P = P[P["subtype"] == sub]
+            a.scatter(P["x"], P["y"], s=0.9, c=PLANT_INK, linewidths=0, zorder=5)
+        map_frame(a, ext)
+        tot = t["area_ha"].sum()
+        nat = t[f"within_{r}km_ha"].sum() / tot if tot else np.nan
+        panel_title(cv, x, y + MH + 0.4, f"({letter(i)}) {title}")
+        cv.text(x + MW - 0.5, y + 1.0, f"Brazil: {_pct(nat)}\nof {tot / 1e6:.1f} Mha", fontsize=fs.FS_ITEM,
+                ha="right", va="bottom", linespacing=1.2)
+        cv.panel(f"{letter(i)}_{pair.replace('|', '_')}_{r}km", x, y, x + MW, y + MH + TT - 0.2)
+        ctx.ck.add(f"x06_{pair}_{r}km", True, f"Brazil {nat:.1%} of {tot / 1e6:.2f} Mha", nat)
+    rows = [("patch", {"fc": c, "ec": "#7a7a7a"}, lab) for c, lab in zip(colors, SHARE_LABELS, strict=True)]
+    cv.legend(1.0, LEG - 1.2, [("Share of the region's crop area within the radius", rows[:3])], header=None)
+    cv.legend(30.0, LEG - 1.2 - fs.ROW, [("", rows[3:])], header=None)
+    cv.legend(56.0, LEG - 1.2 - fs.ROW, [("", [("patch", {"fc": "#f3f3f3", "ec": "#7a7a7a"},
+                                                f"< {min_ha / 1e3:.0f} kha of the crop"),
+                                               ("dot", (1.5, PLANT_INK, PLANT_INK, 0), "Plant (operating)")])],
+              header=None)
+    cv.north(102.0, 6.5)
+    cv.scale(106.0, 6.3, S, seg_km=1000, n=1, bh=0.6)
+    cv.text(1.0, 0.5, "133 intermediate regions (IBGE 2017). Shares from 30 m pixel distances to the nearest "
+            "operating plant (great circle). EPSG:5880. " + fs.CREDIT_CARTO,
+            fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, va="bottom")
+    cv.panel("legend", 0.5, 0.0, FW - 0.5, LEG - 0.2)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x07 — intermediate-region typology
+# ---------------------------------------------------------------------------
+REGION_COLORS = {"N": "#1b9e77", "NE": "#d95f02", "CO": "#7570b3", "SE": "#e7298a", "S": "#66a61e"}
+REGION_NAME = {"N": "North", "NE": "Northeast", "CO": "Centre-West", "SE": "Southeast", "S": "South"}
+UF_REGION = {**dict.fromkeys(["AC", "AP", "AM", "PA", "RO", "RR", "TO"], "N"),
+             **dict.fromkeys(["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"], "NE"),
+             **dict.fromkeys(["DF", "GO", "MT", "MS"], "CO"), **dict.fromkeys(["ES", "MG", "RJ", "SP"], "SE"),
+             **dict.fromkeys(["PR", "RS", "SC"], "S")}
+
+
+TYPE_COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#9c755f", "#76b7b2", "#edc948", "#ff9da7"]
+# types named after their dominant crops take that crop's colour (Figs 3-7); the rest fall back to TYPE_COLORS
+TYPE_STYLE = {"soybean": fs.CROP_COLORS["soybean"], "soybean + other": "#8fbbd9",
+              "sugarcane + soybean": fs.CROP_COLORS["sugarcane"], "other + coffee": "#e8a27a", "other": "#cbbd9e"}
+TYPE_TITLE = {"soybean": "Soybean", "soybean + other": "Soybean and others", "sugarcane + soybean":
+              "Sugarcane and soybean", "other + coffee": "Others and coffee", "other": "Others"}
+MINOR = "#e6e6e6"
+
+
+SHARE_COL = "within_30km__all_crops__biogas"
+TYPOLOGY_CREDIT = ("133 intermediate regions (IBGE 2017); MapBiomas Col. 11 2024 crop area, 30 m reach; N1 observed "
+                   "variant, CP2b ref factors.\nMarker area: biogas plants in the region. ")
+
+
+def _typology(ctx: Ctx) -> dict | None:
+    """The demo typology with what its panels share: colours, type names, priority regions in rank order."""
+    ty = ctx.d("typology")
+    if ty is None:
+        return None
+    ty = ty.set_index("cd_rgint")
+    names = ty[ty["cluster"] > 0].groupby("cluster")["cluster_name"].first()
+    n1 = ty[ty["cluster"] > 0].groupby("cluster")["n1_ref_nm3"].sum()
+    names = names.reindex(n1.sort_values(ascending=False).index)          # types in the order of their N1
+    col = {int(k): TYPE_STYLE.get(v, TYPE_COLORS[(int(k) - 1) % len(TYPE_COLORS)]) for k, v in names.items()}
+    col[0] = MINOR
+    t = ty[ty["cluster"] > 0]
+    pr = t[t["priority"]].sort_values("n1_ref_nm3", ascending=False)
+    return {"ty": ty, "names": names, "col": col, "t": t, "pr": pr,
+            "count": t.groupby("cluster").size(), "n1": n1}
+
+
+def _types_map(ctx: Ctx, cv: Canvas, x: float, y0: float, S: float, d: dict, title: str, panel: str):
+    rg, ext = ctx.regions(), ctx.ext
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    a = cv.map_ax(x, y0, ext, S)
+    m = rg.assign(cluster=rg["cd_rgint"].map(d["ty"]["cluster"]).fillna(0).astype(int))
+    m.plot(ax=a, color=[d["col"][c] for c in m["cluster"]], linewidth=0, zorder=1)
+    rg.boundary.plot(ax=a, color="white", linewidth=0.18, zorder=2)
+    ctx.states.boundary.plot(ax=a, color="#4d4d4d", linewidth=0.28, zorder=3)
+    ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+    map_frame(a, ext)
+    panel_title(cv, x, y0 + MH + 0.4, title)
+    cv.panel(panel, x, y0, x + MW, y0 + MH + 4.2)
+
+
+def _reach_scatter(c, d: dict, compact: bool = False):
+    """N1 of each region against its crop share within 30 km of a biogas plant; priorities ringed and numbered."""
+    t, pr = d["t"], d["pr"]
+    n = t["plants__biogas"].fillna(0)
+    for k in d["names"].index:
+        s = t[t["cluster"] == k]
+        c.scatter(s["n1_ref_nm3"] / 1e9, s[SHARE_COL], s=3.0 + 2.2 * np.sqrt(n.loc[s.index]), c=d["col"][int(k)],
+                  alpha=0.9, edgecolors="white", linewidths=0.3, zorder=3)
+    c.set_xscale("log")
+    c.set_ylim(-0.03, 1.03)
+    c.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    q75 = t["n1_ref_nm3"].quantile(0.75) / 1e9
+    c.axvline(q75, color=fs.HAIR, lw=0.5, zorder=1)
+    c.axhline(0.25, color=fs.HAIR, lw=0.5, zorder=1)
+    xr = t["n1_ref_nm3"].max() / 1e9 * 1.6
+    c.fill_between([q75, xr], -0.05, 0.25, color="#fbe3e3", lw=0, zorder=0)         # the priority quadrant
+    for _, r in pr.iterrows():
+        c.scatter(r["n1_ref_nm3"] / 1e9, r[SHARE_COL], s=16, facecolors="none", edgecolors=fs.INK, linewidths=0.5,
+                  zorder=4)
+    c.set_xlim(0.01, xr)
+    # numbers: the first of eight offsets (points) whose box clears the rings and the numbers already placed
+    fig = c.figure
+    fig.canvas.draw()
+    to_px = c.transData.transform
+    pts = [to_px((r["n1_ref_nm3"] / 1e9, r[SHARE_COL])) for _, r in pr.iterrows()]
+    pp = fig.dpi / 72.0
+    ring = 3.2 * pp
+    taken = [(x - ring, y - ring, x + ring, y + ring) for x, y in pts]
+    cands = [(4, 3), (4, -7), (-9, 3), (-9, -7), (6, -2), (-11, -2), (-2, 6), (-2, -11), (5, 9), (-10, 9),
+             (-2, 13), (7, 15), (-12, 15)]
+    ax_box = c.get_window_extent()
+    for j, (x, y) in enumerate(pts, start=1):
+        w, h = (3.6 if j < 10 else 6.4) * pp, 5.0 * pp
+        for dx, dy in cands:
+            bx, by = x + dx * pp, y + dy * pp
+            box = (bx, by, bx + w, by + h)
+            inside = ax_box.x0 <= box[0] and box[2] <= ax_box.x1 and ax_box.y0 <= box[1] and box[3] <= ax_box.y1
+            if inside and not any(box[0] < t[2] and t[0] < box[2] and box[1] < t[3] and t[1] < box[3]
+                                  for t in taken):
+                break
+        taken.append(box)
+        c.annotate(str(j), (r_ := c.transData.inverted().transform((x, y))), xytext=(dx, dy),
+                   textcoords="offset points", fontsize=fs.FS_TEXT - 1.8, color=fs.INK, zorder=5, va="bottom",
+                   ha="left")
+        del r_
+    c.text(0.99, 0.97, "priority: top quartile of N1,\n< 25 % within 30 km", transform=c.transAxes, ha="right",
+           va="top", fontsize=fs.FS_TEXT - 1.0, color=fs.DETAIL, style="italic")
+    c.set_xlabel("N1 of the crop residues (billion Nm³ CH4/yr, log)" if compact else
+                 "N1 of the region's crop residues (billion Nm³ CH4/yr, log)")
+    c.set_ylabel("Within 30 km of a biogas plant")
+    axis_style(c)
+
+
+def _type_rows(d: dict) -> list:
+    rows = [("patch", {"fc": d["col"][int(k)], "ec": "#7a7a7a"},
+             f"{TYPE_TITLE.get(v, v)} ({int(d['count'].get(k, 0))})") for k, v in d["names"].items()]
+    rows.append(("patch", {"fc": MINOR, "ec": "#7a7a7a"}, "minor agriculture"))
+    return rows
+
+
+def _priority_lines(d: dict) -> list[str]:
+    return [f"{j}. {r.nm_rgint} ({r.uf})" for j, r in enumerate(d["pr"].itertuples(), start=1)]
+
+
+@register("x07", "x07_region_typology")
+def x07_typology(ctx: Ctx, host=None):
+    """Typology of the intermediate regions (bbp demo): (a) types from the CLR crop composition, (b) share of all
+    crops within 30 km of a biogas plant, (c) N1 against that share, plants as marker size, priorities named."""
+    from matplotlib import colormaps
+
+    from bbp.figures import nice_scale
+
+    d = _typology(ctx)
+    if d is None:
+        return None
+    rg, ext, ty = ctx.regions(), ctx.ext, d["ty"]
+    FW, gap = fs.FULL_W, 3.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT, SCH, LEG = 4.4, 46.0, 12.0
+    FH = MH + TT + SCH + 14.0 + LEG
+    cv = fs.canvas(FW, FH, host)
+    # (a) types
+    y0 = FH - MH - TT + 0.2
+    _types_map(ctx, cv, 1.0, y0, S, d, "(a) Types of crop composition (CLR, Ward)", "a_types")
+    # (b) share within reach
+    x1 = 1.0 + w + gap
+    b = cv.map_ax(x1, y0, ext, S)
+    cmap = colormaps["YlGnBu"]
+    colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
+    mb = rg.assign(share=rg["cd_rgint"].map(ty[SHARE_COL]), minor=rg["cd_rgint"].map(ty["cluster"]).fillna(0) == 0)
+    mb[mb["minor"]].plot(ax=b, color="#f3f3f3", linewidth=0, zorder=1)
+    cls = np.digitize(mb.loc[~mb["minor"], "share"].fillna(0), SHARE_EDGES[1:-1])
+    mb.loc[~mb["minor"]].plot(ax=b, color=[colors[k] for k in cls], linewidth=0, zorder=1.2)
+    rg.boundary.plot(ax=b, color="white", linewidth=0.18, zorder=2)
+    ctx.states.boundary.plot(ax=b, color="#4d4d4d", linewidth=0.28, zorder=3)
+    ctx.country.boundary.plot(ax=b, color=fs.COUNTRY_EDGE, linewidth=0.45, zorder=3.2)
+    if ctx.plants is not None:
+        P = ctx.plants[(ctx.plants["family"] == "biogas") & ctx.plants["operating"].fillna(True).astype(bool)]
+        b.scatter(P["x"], P["y"], s=0.7, c=PLANT_INK, linewidths=0, zorder=5)
+    map_frame(b, ext)
+    panel_title(cv, x1, y0 + MH + 0.4, "(b) All crops within 30 km of a biogas plant")
+    cv.panel("b_within_reach", x1, y0, x1 + MW, y0 + MH + TT - 0.2)
+    # (c) N1 vs share within reach
+    ys = LEG + 9.0
+    c = cv.ax(12.0, ys, 74.0, SCH)
+    _reach_scatter(c, d)
+    panel_title(cv, 2.0, ys + SCH + 2.0, "(c) Residue against reach")
+    cv.panel("c_n1_vs_reach", 0.5, ys - 9.0, 88.0, ys + SCH + 6.0)
+    # legend: types, shares, priorities
+    rows = _type_rows(d)
+    cv.legend(91.0, ys + SCH, [("Type (a, c)", rows)], header=None)
+    srows = [("patch", {"fc": cc, "ec": "#7a7a7a"}, lab) for cc, lab in zip(colors, SHARE_LABELS, strict=True)]
+    cv.legend(91.0, ys + SCH - (len(rows) + 2) * fs.ROW, [("Within 30 km (b)", srows)], header=None)
+    cv.text(91.0, ys + SCH - (len(rows) + len(srows) + 5) * fs.ROW,
+            "Priority regions (c):\n" + "\n".join(_priority_lines(d)), fontsize=fs.FS_ITEM - 0.6, va="top",
+            linespacing=1.25)
+    cv.text(1.0, 0.6, TYPOLOGY_CREDIT + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, va="bottom",
+            linespacing=1.3)
+    cv.panel("legend", 89.0, ys - 9.0, FW - 0.5, ys + SCH + 6.0)
+    ctx.ck.add("x07_types", True, f"{len(d['names'])} types; {len(d['pr'])} priority regions", len(d["pr"]))
+    return cv
+
+
+def typology_mandate(ctx: Ctx, host=None):
+    """Paper Fig 9 (conclusion 5): (a) types map, (b) N1 against the share within reach with the priorities,
+    (c) the mandate ruler (x08c) underneath."""
+    from bbp.figures import nice_scale
+
+    d = _typology(ctx)
+    if d is None or ctx.d("mandate_targets") is None:
+        return None
+    RH = RULER_H
+    ext = ctx.ext
+    FW, gap = fs.FULL_W, 4.0
+    w = (FW - 2.0 - gap) / 2
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    TT = 4.4
+    rows = _type_rows(d)
+    pl = _priority_lines(d)
+    half = (len(pl) + 1) // 2
+    LEG = (max(len(rows), half) + 1) * fs.ROW + 0.8
+    CR = 6.0
+    top = MH + TT + LEG + CR
+    FH = top + 2.0 + RH
+    cv = fs.canvas(FW, FH, host)
+    y0 = FH - MH - TT + 0.2
+    _types_map(ctx, cv, 1.0, y0, S, d, "(a) Types of crop composition (CLR, Ward)", "a_types")
+    x1 = 1.0 + MW + gap + 9.0
+    c = cv.ax(x1, y0 + 8.0, FW - x1 - 1.5, MH - 9.0)
+    _reach_scatter(c, d, compact=True)
+    panel_title(cv, x1 - 9.0, y0 + MH + 0.4, "(b) Residue against reach")
+    cv.panel("b_n1_vs_reach", x1 - 9.5, y0, FW - 0.5, y0 + MH + 4.2)
+    ly = y0 - 1.5
+    cv.legend(1.0, ly, [("Type", rows)], header=None)
+    px = 1.0 + MW + gap
+    cv.text(px, ly, "Priority regions (b)", fontsize=fs.FS_TITLE, va="top")
+    for k, chunk in enumerate((pl[:half], pl[half:])):
+        cv.text(px + k * 33.0, ly - 3.2, "\n".join(chunk), fontsize=fs.FS_ITEM - 0.4, va="top", linespacing=1.3)
+    cv.text(1.0, RH + 2.0 + 0.4, TYPOLOGY_CREDIT + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED,
+            va="bottom", linespacing=1.3)
+    cv.panel("legend", 0.5, RH + 2.0, FW - 0.5, y0 - 0.5)
+    mandate_ruler(ctx, host=lambda fw_, fh_: fs.SubCanvas(cv, 0.0, 0.0, fw_, fh_, prefix="c_"),
+                  head="(c) Biomethane mandate: targets, flows and the stock within reach")
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x08 — registers compared; biomethane plants against the mandate
+# ---------------------------------------------------------------------------
+@register("x08", "x08_registers_biomethane")
+def x08_registers(ctx: Ctx, host=None):
+
+    from bbp.plants import read_conab_mills, read_epe_mills
+    from bbp.reach import haversine_km
+
+    if ctx.plants is None:
+        return None
+    cfg = ctx.cfg
+    cx = {k: cfg.raw_root / (v["path"] if isinstance(v, dict) else v)
+          for k, v in (cfg.section("plants").get("registers") or {}).items()}
+    anp = ctx.plants[ctx.plants["family"] == "sugarcane_mill"].to_crs("EPSG:4674")
+    anp_op = anp[anp["operating"].fillna(True).astype(bool)]
+    regs = {"ANP 2026 (operating)": anp_op}
+    if cx.get("conab") and cx["conab"].exists():
+        regs["CONAB 2025 (active)"] = read_conab_mills(cx["conab"])
+    if cx.get("epe") and cx["epe"].exists():
+        regs["MapBiomas / EPE 2018"] = read_epe_mills(cx["epe"])
+    FW, FH = fs.FULL_W, X08C_H
+    cv = fs.canvas(FW, FH, host)
+    # (a) mills per state, three registers
+    a = cv.ax(10.0, 13.0, 36.0, FH - 20.0)
+    ufcol = {k: ("UF" if "UF" in g else "uf") for k, g in regs.items()}
+    counts = pd.DataFrame({k: g[ufcol[k]].value_counts() for k, g in regs.items()}).fillna(0)
+    top = counts.sum(axis=1).nlargest(10).index[::-1]
+    shades = ["#1a1a1a", "#8c8c8c", "#cfcfcf"]
+    bh = 0.8 / len(regs)
+    for j, k in enumerate(regs):
+        a.barh(np.arange(len(top)) + (j - (len(regs) - 1) / 2) * bh, counts.loc[top, k], height=bh,
+               color=shades[j], label=k, edgecolor="white", linewidth=0.2)
+    a.set_yticks(range(len(top)), top)
+    a.set_xlabel("Cane mills")
+    a.legend(loc="lower right", fontsize=fs.FS_ITEM - 0.3, handlelength=1.0, borderaxespad=0.2)
+    a.grid(axis="x", color=fs.FAINT, lw=0.4)
+    cv.text(1.0, FH - 1.0, "(a) Cane mills per state", fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+    cv.panel("a_mills_per_state", 0.5, 2.0, 48.0, FH - 0.3)
+    # (b) do the registers locate the same mills? distance from each ANP mill to the nearest unit of the others
+    b = cv.ax(56.0, 13.0, 26.0, FH - 20.0)
+    lab_b = []
+    for j, (k, g) in enumerate(list(regs.items())[1:]):
+        lon, lat = g.geometry.x.to_numpy(), g.geometry.y.to_numpy()
+        d = np.array([haversine_km(x_, y_, lon, lat).min() for x_, y_ in zip(anp_op["lon"], anp_op["lat"],
+                                                                             strict=True)])
+        xs = np.sort(d)
+        b.plot(np.maximum(xs, 0.01), np.arange(1, len(xs) + 1) / len(xs), color=shades[j + 1] if j else "#555555",
+               lw=0.9, ls="-" if j == 0 else (0, (3, 1.2)))
+        lab_b.append((k, float((d <= 2).mean()), float((d <= 10).mean())))
+    b.set_xscale("log")
+    b.set_xlim(0.05, 200)
+    b.set_ylim(0, 1)
+    b.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    b.axvline(2, color=fs.HAIR, lw=0.5)
+    b.set_xlabel("Nearest unit in the other register (km)")
+    b.set_ylabel("ANP mills (cumulative)")
+    axis_style(b)
+    for j, (k, s2, _s10) in enumerate(lab_b):
+        b.text(0.97, 0.50 - j * 0.07, f"{k.split(' (')[0].replace('MapBiomas / ', '')}: {_pct(s2)} ≤ 2 km",
+               transform=b.transAxes, fontsize=fs.FS_TEXT - 1.0, va="top", ha="right",
+               color="#555555" if j == 0 else "#8c8c8c")
+    b.text(0.97, 0.34, "EPE points reused\nby ANP: dashed\ncurve starts high", transform=b.transAxes,
+           fontsize=fs.FS_TEXT - 1.4, va="top", ha="right", color=fs.MUTED, linespacing=1.2)
+    cv.text(48.5, FH - 1.0, "(b) Same mills, same place?", fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+    cv.panel("b_register_match", 47.0, 2.0, 84.0, FH - 0.3)
+    # (c) biomethane plants: capacity, estimated output, the mandate
+    c = cv.ax(98.0, 13.0, 32.0, FH - 20.0)
+    bm = ctx.plants[ctx.plants["family"] == "biomethane"]
+    bm = bm[bm["operating"].astype(bool)].sort_values("capacity")
+    snaps = ctx.proc / "plants_biomethane_snapshots.parquet"
+    if len(bm):
+        mill_sites = ctx.plants.loc[ctx.plants["family"] == "sugarcane_mill", "site_id"]
+        cane = bm["site_id"].isin(mill_sites) | bm["name"].str.contains(
+            "COCAL|RAÍZEN|RAIZEN|ADECOAGRO|SANTA CRUZ|BIOENERGIA", case=False)
+        yy = np.arange(len(bm))
+        c.barh(yy, bm["capacity"] / 1e3, color=np.where(cane, fs.CROP_COLORS["sugarcane"], "#5a5a5a"), height=0.75,
+               edgecolor="none", label="Authorised capacity")
+        c.set_yticks(yy, [f"{u}" for u in bm["uf"]], fontsize=fs.FS_TEXT - 1.4)
+        c.set_xlabel("Biomethane (1,000 m³/day)")
+        c.grid(axis="x", color=fs.FAINT, lw=0.4)
+        lines = [f"{len(bm)} plants", f"authorised {bm['capacity'].sum() / 1e6:.2f} M m³/d"]
+        if snaps.exists():
+            s = pd.read_parquet(snaps).iloc[-1]
+            lines += [f"produced {s['produced_m3d'] / 1e6:.2f} M m³/d ({s['snapshot']})"]
+        c.text(0.98, 0.03, "\n".join(lines), transform=c.transAxes, ha="right", va="bottom",
+               fontsize=fs.FS_TEXT - 1.0, linespacing=1.25, bbox={"fc": "white", "ec": "none", "alpha": 0.9,
+                                                                    "pad": 0.6})
+        ctx.ck.add("x08_biomethane", True, "; ".join(lines), float(bm["capacity"].sum()))
+    cv.text(86.0, FH - 1.0, "(c) Biomethane plants (green: cane mills)", fontsize=fs.FS_LABEL, fontweight="bold",
+            va="top")
+    cv.panel("c_biomethane", 85.0, 2.0, FW - 0.5, FH - 0.3)
+    cv.text(1.0, 0.6, "Data: ANP ethanol plants; ANP biomethane open data (capacity and production, snapshot set in "
+            "pipeline.yaml); CONAB 2025;\nMapBiomas infrastructure (EPE webmap 2018). The mandate ruler: Fig 9c "
+            "of the paper.", fontsize=fs.FS_CRED,
+            color=fs.MUTED, va="bottom", linespacing=1.3)
+    for k, s2, s10 in lab_b:
+        ctx.ck.add(f"x08_match_{k.split(' ')[0]}", True, f"{s2:.1%} of ANP mills within 2 km, {s10:.1%} within 10 km",
+                   s2)
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x08c — the biomethane mandate ruler
+# ---------------------------------------------------------------------------
+X08C_H = 70.0                        # mm, also the bottom row of the paper Fig 9
+
+
+@register("x08c", "x08c_mandate_ruler")
+def x08c_mandate(ctx: Ctx, host=None, start: int | None = None):
+    """Biomethane mandate ruler (bbp demo): targets (official volumes; indicative ones hatched), ANP capacity and
+    production (flows, lines), N1 within reach of existing biomethane plants (stock, shaded band at the back)."""
+    tg, st = ctx.d("mandate_targets"), ctx.d("mandate_stock")
+    snaps = ctx.proc / "plants_biomethane_snapshots.parquet"
+    if tg is None or not snaps.exists():
+        return None
+    sn = pd.read_parquet(snaps)
+    cur = sn.iloc[-1]
+    FW, FH = fs.FULL_W, 70.0
+    cv = fs.canvas(FW, FH, host)
+    a = cv.ax(14.0, 16.0, 78.0, FH - 24.0)
+    yrs = tg["year"].to_numpy()
+    x0, x1 = yrs.min() - 0.6, yrs.max() + 0.6
+    top = 0.0
+    if st is not None:
+        s30 = st[(st["pair"] == "all_crops|biomethane") & (st["radius_km"] == 30)]
+        if len(s30):
+            r = s30.iloc[0]
+            a.axhspan(r["n1_min_m3d"] / 1e6, r["n1_max_m3d"] / 1e6, color="#dfeee6", zorder=0, lw=0)
+            a.axhline(r["n1_ref_m3d"] / 1e6, color="#9cc9b0", lw=0.7, ls=(0, (2, 1)), zorder=0.5)
+            a.text(x0 + 0.05, r["n1_max_m3d"] / 1e6 - 0.1, f"stock within 30 km: {r['n1_ref_m3d'] / 1e6:.1f} "
+                   f"({r['n1_min_m3d'] / 1e6:.1f}–{r['n1_max_m3d'] / 1e6:.1f}) M Nm³ CH4/d", fontsize=fs.FS_TEXT - 1.4,
+                   color="#3f7f5c", va="top")
+            top = max(top, r["n1_max_m3d"] / 1e6)
+    off = (tg["volume_source"] == "official").to_numpy()
+    vol = (tg["volume_m3d"] / 1e6).to_numpy()
+    a.bar(yrs[off], vol[off], width=0.5, color="#1a1a1a", zorder=3)
+    a.bar(yrs[~off], vol[~off], width=0.5, facecolor="white", edgecolor="#1a1a1a", lw=0.6, hatch="////", zorder=3)
+    for y_, v, p in zip(yrs, vol, tg["ghg_reduction_pct"], strict=True):
+        a.text(y_, v + 0.08, f"{p:g} %\n{v:.2f}", ha="center", va="bottom", fontsize=fs.FS_TEXT - 1.4, linespacing=1.1,
+               zorder=6)
+    green = fs.CROP_COLORS["sugarcane"]
+    a.axhline(cur["authorised_m3d"] / 1e6, color=green, lw=0.9, zorder=4)
+    a.axhline(cur["produced_m3d"] / 1e6, color="#c1121f", lw=0.9, zorder=4)
+    if len(sn) > 1:
+        a.axhline(sn.iloc[0]["produced_m3d"] / 1e6, color="#c1121f", lw=0.5, ls=(0, (1, 1)), alpha=0.7, zorder=4)
+    a.set_xlim(x0, x1)
+    a.set_ylim(0, max(top, vol.max()) * 1.08)
+    a.set_xticks(yrs)
+    a.set_ylabel("Million m³ per day")
+    axis_style(a)
+    head = "Biomethane mandate: targets, flows and the stock within reach"
+    cv.text(1.0, FH - 1.0, head if start is None else f"({letter(start)}) {head}", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="top")
+    rows = [("patch", {"fc": "#1a1a1a", "ec": "#1a1a1a"}, "target, official volume"),
+            ("patch", {"fc": "white", "ec": "#1a1a1a", "hatch": "////"}, "indicative, under consultation"),
+            ("line", (green, 0.9, "-"), f"ANP authorised {cur['authorised_m3d'] / 1e6:.2f} ({cur['snapshot']})"),
+            ("line", ("#c1121f", 0.9, "-"), f"ANP production {cur['produced_m3d'] / 1e6:.2f} ({cur['snapshot']})")]
+    if len(sn) > 1:
+        rows.append(("line", ("#c1121f", 0.5, (0, (1, 1))),
+                     f"production {sn.iloc[0]['produced_m3d'] / 1e6:.2f} ({sn.iloc[0]['snapshot']}, record)"))
+    rows.append(("patch", {"fc": "#dfeee6", "ec": "#9cc9b0"}, "stock: N1 within 30 km of the plants"))
+    cv.legend(96.0, FH - 12.0, [("", rows)], header=None)
+    cv.text(1.0, 0.6, "Volumes as stated: CNPE Res. 4/2026 (2026), MME Ordinance 942/2026 (2027, consultation). "
+            "2028–2030: % × the 2027 base (derived);\nno official target for 2035. Flows: m³ of biomethane per day "
+            "(ANP open data). Stock: theoretical methane (N1), not an available supply.",
+            fontsize=fs.FS_CRED - 0.4, color=fs.MUTED, va="bottom", linespacing=1.3)
+    ctx.ck.add("x08c_mandate", True, f"{len(tg)} targets; production {cur['produced_m3d'] / 1e6:.2f} M m³/d",
+               float(cur["produced_m3d"]))
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x09 — map vs statistics: agreement on the level and on the change
+# ---------------------------------------------------------------------------
+TREND_CROPS = ["soybean", "corn_2nd", "sugarcane"]
+TREND_SCALES = ["municipality", "rgint", "uf"]
+TREND_SCALE_LABEL = {"municipality": "Municipality", "rgint": "Intermediate\nregion", "uf": "State"}
+
+
+@register("x09", "x09_trend_agreement")
+def x09_trend(ctx: Ctx, host=None):
+    """(a) Zooming out: rank agreement between units on the level (2020–2024) and on the change between the trend
+    windows, same metric (Spearman ρ); (b) municipalities: do the sources agree on the direction of the change,
+    by size of the change (dot area = share of the declared area)."""
+    paths = {n: ctx.proc / f"{n}.parquet" for n in ("agreement_by_scale", "trend_agreement", "trend_by_magnitude")}
+    if not all(p.exists() for p in paths.values()):
+        return None
+    ag, tr, mg = (pd.read_parquet(p) for p in paths.values())
+    years = ctx.cfg.section("reconcile").get("reference_years", ctx.cfg.years[-5:])
+    crops = [c for c in TREND_CROPS if c in set(tr["crop"])]
+    level = ag[ag["year"].isin(years)].groupby(["crop", "scale"], observed=True)["spearman_rho"].mean()
+    change = tr.set_index(["crop", "scale"])["spearman_rho"]
+    n_units = tr.set_index(["crop", "scale"])["n_units"]
+    w0, w1 = tr["window_0"].iloc[0], tr["window_1"].iloc[0]
+
+    FW, FH = fs.FULL_W, 66.0
+    cv = fs.canvas(FW, FH, host)
+    y0, ph = 13.0, 46.0
+
+    # ---- (a) level vs change as the units grow --------------------------------------------------------------
+    xa, wa = 13.0, 46.0
+    a = cv.ax(xa, y0, wa, ph)
+    axis_style(a)
+    xs = np.arange(len(TREND_SCALES))
+    ends = []
+    for c in crops:
+        col = fs.CROP_COLORS[c]
+        lv = [level.get((c, s), np.nan) for s in TREND_SCALES]
+        ch = [change.get((c, s), np.nan) for s in TREND_SCALES]
+        a.plot(xs, lv, color=col, lw=0.9, marker="o", ms=3.0, mec=fs.INK, mew=0.3, zorder=3)
+        a.plot(xs, ch, color=col, lw=0.9, ls=(0, (3, 1.4)), marker="o", ms=3.0, mfc="white", mec=col, mew=0.8,
+               zorder=3)
+        ends.append((fs.label(c), xs[-1] + 0.08, ch[-1], col))
+    a.set_xticks(xs, [TREND_SCALE_LABEL[s] for s in TREND_SCALES], fontsize=fs.FS_ITEM)
+    a.set_xlim(-0.25, len(xs) - 0.55)
+    a.set_ylim(0, 1.05)
+    a.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    a.set_ylabel("Rank agreement between units\n(Spearman ρ, map vs PAM)")
+    fs.direct_labels(a, ends, x_pad=0.12, min_gap=0.07, fontsize=fs.FS_ITEM)
+    panel_title(cv, xa - 11.5, y0 + ph + 1.6, "(a) Zooming out: level vs change", size=fs.FS_LABEL)
+    cv.legend(xa + 1.0, y0 + 9.5, [("", [("line", (fs.MUTED, 0.9), f"level, {years[0]}–{years[-1]}"),
+                                         ("line", (fs.MUTED, 0.9, (0, (3, 1.4))), f"change, {w0} → {w1}")])],
+              header=None)
+    cv.text(xa + wa - 0.5, y0 - 9.4, "states with the crop: " + ", ".join(
+        f"{fs.label(c)} {int(n_units.get((c, 'uf'), 0))}" for c in crops), fontsize=fs.FS_CRED, ha="right",
+            color=fs.MUTED)
+
+    # ---- (b) municipalities: direction agreement by size of the change ----------------------------------------
+    xb, wb = 89.0, 38.0
+    b = cv.ax(xb, y0, wb, ph)
+    axis_style(b)
+    m = mg[(mg["scale"] == "municipality") & mg["crop"].isin(crops)]
+    bins = sorted(m["bin"].unique())
+    edges = m.drop_duplicates("bin").set_index("bin")[["dlog_low", "dlog_high"]]
+
+    def pct(v):
+        return f"{100 * (np.exp(v) - 1):.0f}"
+
+    ticks = []
+    for k in bins:
+        lo, hi = edges.loc[k]
+        ticks.append(f"< {pct(hi)} %" if lo == 0 else (f"> {pct(lo)} %" if not np.isfinite(hi) else
+                                                       f"{pct(lo)}–{pct(hi)} %"))
+    b.axhline(0.5, color=fs.MUTED, lw=0.5, ls=(0, (1, 1.2)), zorder=1)
+    b.text(len(bins) - 1.05, 0.515, "coin flip", fontsize=fs.FS_CRED, color=fs.MUTED, ha="right", va="bottom")
+    ends = []
+    for j, c in enumerate(crops):
+        g = m[m["crop"] == c].set_index("bin").reindex(bins)
+        dx = (j - (len(crops) - 1) / 2) * 0.14
+        x = np.arange(len(bins)) + dx
+        col = fs.CROP_COLORS[c]
+        b.plot(x, g["share_same_sign"], color=col, lw=0.8, zorder=2)
+        b.scatter(x, g["share_same_sign"], s=4 + 90 * g["area_share"].fillna(0), c=col, edgecolors="white",
+                  linewidths=0.4, zorder=3)
+        ends.append((fs.label(c), len(bins) - 1 + 0.2, g["share_same_sign"].iloc[-1], col))
+    b.set_xticks(np.arange(len(bins)), ticks, fontsize=fs.FS_ITEM)
+    b.set_xlim(-0.4, len(bins) - 0.1)
+    b.set_ylim(0.4, 1.02)
+    b.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    b.set_xlabel("Size of the change in crop area")
+    b.set_ylabel("Municipalities where both\nsources change the same way", labelpad=2)
+    panel_title(cv, xb - 14.0, y0 + ph + 1.6, "(b) Municipalities: by size of the change",
+                size=fs.FS_LABEL)
+    kx, ky = xb + 1.5, y0 + ph - 3.0                  # dot-size key
+    cv.text(kx, ky, "share of the crop's area:", fontsize=fs.FS_CRED, va="center", color=fs.MUTED)
+    for v, off in ((0.1, 0.0), (0.5, 9.0)):
+        cv.ov.scatter([kx + 1.5 + off], [ky - 3.6], s=4 + 90 * v, c=fs.MUTED, edgecolors="white", linewidths=0.4)
+        cv.text(kx + 3.2 + off + 1.4 * (v > 0.2), ky - 3.6, f"{100 * v:.0f} %", fontsize=fs.FS_CRED, va="center")
+
+    for c in crops:
+        g = m[m["crop"] == c]
+        small = g[g["bin"] <= 1]
+        ctx.ck.add(f"x09_{c}", True, "level ρ {}; change ρ {}; small changes hold {:.0%} of the area".format(
+            " → ".join(f"{level.get((c, s), np.nan):.2f}" for s in TREND_SCALES),
+            " → ".join(f"{change.get((c, s), np.nan):.2f}" for s in TREND_SCALES), small["area_share"].sum()))
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x10 — where the map and the statistics tell a different story of change: soybean and 2nd-season corn
+# ---------------------------------------------------------------------------
+TREND_MAP_CROPS = ["soybean", "corn_2nd"]
+DIRECTION_STYLE = [("both_up", "#9ecae1", "both grow"), ("both_down", "#bdbdbd", "both shrink"),
+                   ("obs_up_dec_down", "#e66101", "map grows, PAM shrinks"),
+                   ("obs_down_dec_up", "#5e3c99", "map shrinks, PAM grows")]
+GAP_EDGES = [1 / 1.5, 1 / 1.1, 1.1, 1.5]               # map growth factor / PAM growth factor
+GAP_COLORS = ["#5e3c99", "#b2abd2", "#f4f4f4", "#fdb863", "#e66101"]
+GAP_LABELS = ["< 0.67 × (map grew less)", "0.67–0.91 ×", "0.91–1.1 × (same)", "1.1–1.5 ×",
+              "> 1.5 × (map grew more)"]
+NOT_SCORED = "#dcdcdc"
+
+
+def _paint(a, g, codes: pd.Series, colors: list):
+    for k, col in enumerate(colors):
+        sel = g[g["geocode"].map(codes) == k]
+        if len(sel):
+            sel.plot(ax=a, color=col, linewidth=0, rasterized=True, zorder=1)
+
+
+@register("x10", "x10_trend_maps_soy_corn")
+def x10_trend_maps(ctx: Ctx, host=None):
+    """Per municipality, between the trend windows: (left) do the two sources move the same way;
+    (right) how much more, or less, the map grew than the PAM. One row per crop."""
+    from bbp.cartography import boundaries
+    from bbp.figures import _crop_maps_layout
+
+    p = ctx.proc / "trend_units.parquet"
+    if not p.exists():
+        return None
+    t = pd.read_parquet(p)
+    t = t[(t["scale"] == "municipality") & t["crop"].isin(TREND_MAP_CROPS)].copy()
+    t["geocode"] = t["unit"].astype(ctx.g["geocode"].dtype)
+    g, ext = ctx.g, ctx.ext
+    tw = pd.read_parquet(ctx.proc / "trend_agreement.parquet")
+    w0, w1 = tw["window_0"].iloc[0], tw["window_1"].iloc[0]
+    min_ha = float(ctx.cfg.section("reconcile").get("trend_min_area_ha", 100))
+
+    gap, title_h, LB = 3.0, 5.0, 22.0
+    S, MW, MH = _crop_maps_layout(ext, 2, gap=gap)
+    row_h = MH + title_h
+    FW, FH = fs.FULL_W, LB + len(TREND_MAP_CROPS) * row_h + 2.0
+    cv = fs.canvas(FW, FH, host)
+    dir_code = {d: k for k, (d, _, _) in enumerate(DIRECTION_STYLE)}
+    for r, c in enumerate(TREND_MAP_CROPS):
+        tc = t[t["crop"] == c].set_index("geocode")
+        y = LB + (len(TREND_MAP_CROPS) - 1 - r) * row_h
+        ratio = np.exp(tc["dlog_obs"] - tc["dlog_dec"])
+        layers = [(tc["direction"].map(dir_code).dropna().astype(int), [s[1] for s in DIRECTION_STYLE],
+                   "direction of change"),
+                  (pd.Series(np.digitize(ratio, GAP_EDGES), index=tc.index), GAP_COLORS,
+                   "map growth ÷ PAM growth")]
+        area = tc["a_dec_ha_1"]
+        for j, (codes, colors, head) in enumerate(layers):
+            x = 1.0 + j * (MW + gap)
+            a = cv.map_ax(x, y, ext, S)
+            ctx.country.plot(ax=a, color="white", linewidth=0, zorder=0)
+            g[g["geocode"].isin(tc.index)].plot(ax=a, color=NOT_SCORED, linewidth=0, rasterized=True, zorder=0.5)
+            _paint(a, g, codes, colors)
+            boundaries(a, ctx.states, ctx.country, 0.25)
+            map_frame(a, ext)
+            cv.text(x + 0.5, y + MH + 0.8, f"{fs.label(c)} — {head}", fontsize=fs.FS_TITLE + 0.2,
+                    fontweight="bold", va="bottom")
+            # share of the crop's late declared area in each class, bottom left of the map
+            sh = area.groupby(codes).sum() / area.sum()
+            names = [s[2] for s in DIRECTION_STYLE] if j == 0 else ["map grew < 0.67 × PAM", "", "", "",
+                                                                     "map grew > 1.5 × PAM"]
+            lines = [f"{100 * sh.get(k, 0):.0f} % {names[k]}" for k in range(len(colors)) if j == 0 or k in (0, 4)]
+            cv.text(x + 0.5, y + 0.6, "\n".join(["share of the area:", *lines]), fontsize=fs.FS_CRED,
+                    color=fs.MUTED, va="bottom", linespacing=1.15)
+        dis = area[tc["direction"].isin(["obs_up_dec_down", "obs_down_dec_up"])].sum() / area.sum()
+        ctx.ck.add(f"x10_{c}", True, f"{len(tc)} municipalities; opposite directions hold {dis:.1%} of the area", dis)
+
+    cv.legend(1.0, LB - 1.0, [(f"Direction, {w0} → {w1}", [("patch", col, lab) for _, col, lab in DIRECTION_STYLE])],
+              header=None)
+    cv.legend(36.0, LB - 1.0, [("", [("patch", NOT_SCORED, f"< {min_ha:g} ha or year missing"),
+                                     ("patch", {"fc": "white", "ec": fs.HAIR}, "crop absent")])], header=None)
+    cv.legend(1.0 + MW + gap, LB - 1.0, [("Map growth ÷ PAM growth", [
+        ("patch", col, lab) for col, lab in zip(GAP_COLORS, GAP_LABELS, strict=True)])], header=None)
+    cv.north(FW - 4.0, LB + 4.0, h=4.0)                 # in the ocean of the bottom-right map
+    cv.scale(FW - 31.0, LB + 3.8, S, seg_km=1000, n=1, compact=True)
+    cv.text(FW - 1.0, 0.6, f"SIRGAS 2000 / Brazil Polyconic. MapBiomas Col. 11; IBGE PAM. {fs.CREDIT_CARTO}",
+            fontsize=fs.FS_CRED, color=fs.MUTED, ha="right", va="bottom")
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# x11 — the land-use chain soybean → pasture → native vegetation, and how many sources see each link
+# (Portuguese labels: a one-page note in Portuguese)
+# ---------------------------------------------------------------------------
+DPP_EDGES = [-10.0, -2.0, 2.0, 10.0]
+DPP_COLORS = ["#a6611a", "#dfc27d", "#f2f2f2", "#80cdc1", "#018571"]
+DPP_LABELS = ["perdeu > 10 p.p.", "perdeu 2–10 p.p.", "±2 p.p.", "ganhou 2–10 p.p.", "ganhou > 10 p.p."]
+GAP_LABELS_PT = ["< 0,67 × (mapa cresceu menos)", "0,67–0,91 ×", "0,91–1,1 × (igual)", "1,1–1,5 ×",
+                 "> 1,5 × (mapa cresceu mais)"]
+
+
+@register("x11", "x11_land_use_chain_pt")
+def x11_chain(ctx: Ctx, host=None):
+    """Three maps, one per link of the chain: soybean growth in the map over the PAM (two sources), then the
+    change in the municipal share of pasture and of native vegetation (MapBiomas only), between the trend
+    windows. Legends under each map; 186 mm wide for an A4 page."""
+    from bbp.cartography import boundaries
+    from bbp.figures import _crop_maps_layout
+    from bbp.reconcile import TREND_COVERS
+
+    p_tu, p_lc = ctx.proc / "trend_units.parquet", ctx.proc / "landcover_change.parquet"
+    if not (p_tu.exists() and p_lc.exists()):
+        return None
+    t = pd.read_parquet(p_tu)
+    t = t[(t["scale"] == "municipality") & (t["crop"] == "soybean")].copy()
+    t["geocode"] = t["unit"].astype(ctx.g["geocode"].dtype)
+    t = t.set_index("geocode")
+    lc = pd.read_parquet(p_lc).set_index("geocode")
+    tw = pd.read_parquet(ctx.proc / "trend_agreement.parquet")
+    w0, w1 = tw["window_0"].iloc[0], tw["window_1"].iloc[0]
+    g, ext = ctx.g, ctx.ext
+
+    FW, gap = 186.0, 3.0
+    S, MW, MH = _crop_maps_layout(ext, 3, width=FW, gap=gap)
+    LB, title_h = 24.0, 8.0
+    FH = LB + MH + title_h
+    cv = fs.canvas(FW, FH, host)
+    panels = [
+        ("(a) Soja: crescimento no mapa ÷ na PAM", "duas fontes: verificável",
+         pd.Series(np.digitize(np.exp(t["dlog_obs"] - t["dlog_dec"]), GAP_EDGES), index=t.index),
+         GAP_COLORS, GAP_LABELS_PT, t.index),
+        ("(b) Pastagem: variação no município", "uma fonte (MapBiomas)",
+         pd.Series(np.digitize(lc["dpp_pasture"], DPP_EDGES), index=lc.index), DPP_COLORS, DPP_LABELS, None),
+        ("(c) Vegetação nativa: variação no município", "uma fonte (MapBiomas)",
+         pd.Series(np.digitize(lc["dpp_natural"], DPP_EDGES), index=lc.index), DPP_COLORS, DPP_LABELS, None),
+    ]
+    for j, (title, sub, codes, colors, labels, scored) in enumerate(panels):
+        x = 1.0 + j * (MW + gap)
+        a = cv.map_ax(x, LB, ext, S)
+        ctx.country.plot(ax=a, color="white", linewidth=0, zorder=0)
+        if scored is not None:
+            g[g["geocode"].isin(scored)].plot(ax=a, color=NOT_SCORED, linewidth=0, rasterized=True, zorder=0.5)
+        _paint(a, g, codes, colors)
+        boundaries(a, ctx.states, ctx.country, 0.25)
+        map_frame(a, ext)
+        cv.text(x + 0.5, LB + MH + 4.2, title, fontsize=fs.FS_TITLE + 0.2, fontweight="bold", va="bottom")
+        cv.text(x + 0.5, LB + MH + 1.0, sub, fontsize=fs.FS_CRED + 0.3, va="bottom",
+                color=fs.DETAIL if j else "#1b7837", fontweight="bold")
+        rows = [("patch", col, lab) for col, lab in zip(colors, labels, strict=True)]
+        if scored is not None:
+            rows.append(("patch", NOT_SCORED, "soja < 100 ha"))
+        cv.legend(x + 0.5, LB - 1.5, [("", rows)], header=None)
+    cv.north(FW - 4.0, LB - 15.0, h=4.0)                  # in the legend band, right of the (c) legend
+    cv.scale(FW - 31.0, LB - 15.2, S, seg_km=1000, n=1, compact=True)
+    cv.text(FW - 1.0, 0.6, f"Médias {w0} vs {w1}. SIRGAS 2000 / Policônica. MapBiomas Col. 11; IBGE PAM. "
+            f"{fs.CREDIT_CARTO.replace('Cartography', 'Cartografia')}", fontsize=fs.FS_CRED, color=fs.MUTED,
+            ha="right", va="bottom")
+    ctx.ck.add("x11_chain", True, f"{len(t)} soybean municipalities scored; {len(lc)} municipalities with cover change",
+               len(t))
+    # national net balance of the three links (MapBiomas), window means: net only, transitions are not seen here
+    mb_p = ctx.cfg.data_dir / "interim" / "mapbiomas_coverage_municipal.parquet"
+    if mb_p.exists():
+        mb = pd.read_parquet(mb_p, columns=["year", "class_id", "area_ha"])
+        (a0, b0), (a1, b1) = (map(int, w.split("–")) for w in (w0, w1))
+        for name, cls in (("soybean", (39,)), ("pasture", TREND_COVERS["pasture"]),
+                          ("natural", TREND_COVERS["natural"])):
+            s = mb[mb["class_id"].isin(cls)].groupby("year")["area_ha"].sum()
+            d = (s.loc[a1:b1].mean() - s.loc[a0:b0].mean()) / 1e6
+            ctx.ck.add(f"x11_net_{name}", True, f"{d:+.1f} Mha between {w0} and {w1} (MapBiomas)", float(d))
+    return cv
+
+
+# ---------------------------------------------------------------------------
+def build(cfg: Config, ck: CheckLog, only: list[str] | None = None) -> list:
+    """`bbp explore`: every exploratory figure, each element also on its own."""
+    import traceback
+
+    from bbp.figures import out_dir
+
+    fs.setup()
+    ctx = Ctx(cfg, ck)
+    folder = out_dir(cfg) / "explore"
+    spec = cfg.section("paper")
+    formats = spec.get("figure_formats", ["pdf", "svg", "png", "tif"])
+    formats = [f for f in formats if f != "tif"]
+    dpi = int(spec.get("dpi", 600))
+    written = []
+    for key, (name, func) in EXPLORE.items():
+        if only and key not in only:
+            continue
+        log.info("Explore %s: %s", key, name)
+        try:
+            cv = func(ctx)
+        except Exception as exc:  # one broken figure must not stop the others
+            log.error("%s", traceback.format_exc())
+            ck.add(f"{key}_built", False, f"{type(exc).__name__}: {exc}")
+            continue
+        if cv is None:
+            ck.add(f"{key}_built", False, "inputs missing (run bbp plants / bbp reach)", severity="warn")
+            continue
+        ck.add(f"{key}_size", cv.fw <= 132.5 and cv.fh <= fs.MAX_H, f"{cv.fw:.1f} × {cv.fh:.1f} mm", severity="warn")
+        written += cv.save(folder, name, formats, dpi, panels_dir=folder / "panels" / name)
+    return written
+
+
+# ---------------------------------------------------------------------------
+# Fig 7 — crops within reach of existing plants: the five pairs as curves, then where, as maps
+# ---------------------------------------------------------------------------
+REACH_PAIRS = ["sugarcane|sugarcane_mill", "corn_2nd|corn_ethanol", "soybean|biodiesel", "all_crops|biogas",
+               "all_crops|biomethane"]
+REACH_TITLE = {"sugarcane|sugarcane_mill": "Cane → mill", "corn_2nd|corn_ethanol": "2nd corn → corn ethanol",
+               "soybean|biodiesel": "Soybean → biodiesel", "all_crops|biogas": "Crops → biogas",
+               "all_crops|biomethane": "Crops → biomethane"}
+REACH_RADIUS = 30.0
+REACH_MIN_HA = 500.0                    # municipalities with less of the crop: light grey
+
+
+def reach_result(ctx: Ctx, host=None):
+    """Fig 7. Top: share of each crop's area by straight-line distance to the nearest operating plant that uses
+    it (0–150 km), each curve labelled with its share at 30 km and its median distance. Bottom: the same share at
+    30 km per municipality, one map per pair, with the plants as dots."""
+    from matplotlib import colormaps
+
+    from bbp.figures import nice_scale
+
+    dist, units = ctx.t("distance"), ctx.t("units")
+    if dist is None or units is None:
+        return None
+    pairs = [p for p in REACH_PAIRS if p in set(dist["pair"])]
+    FW = fs.FULL_W
+    ncol, gap = 3, 5.0                            # maps in rows of three; the legend takes the free cell
+    w = (FW - 2.0 - (ncol - 1) * gap) / ncol
+    ext = ctx.ext
+    S = nice_scale((ext[1] - ext[0]) / w)
+    MW, MH = (ext[1] - ext[0]) / S, (ext[3] - ext[2]) / S
+    nrow = int(np.ceil((len(pairs) + 1) / ncol))
+    CR, TT, RG, CH = 3.5, 4.5, 3.0, 44.0          # credit line, map titles, gap between rows, chart height
+    maps_top = CR + nrow * (MH + TT + RG) - RG
+    FH = maps_top + 4.0 + CH + 7.0
+    cv = fs.canvas(FW, FH, host)
+
+    # ---- the curves -------------------------------------------------------------------------------------------
+    ya = maps_top + 4.0 + 9.0
+    a = cv.ax(15.0, ya, 73.0, CH - 9.0)
+    stats = {}
+    for pair in pairs:
+        t = dist[dist["pair"] == pair].sort_values("bin_km")
+        cdf = (t["area_ha"].cumsum() / t["area_ha"].sum()).to_numpy()
+        x = t["bin_km"].to_numpy() + 1.0                       # upper edge of each 1 km band
+        at = float(np.interp(REACH_RADIUS, x, cdf))
+        med = float(np.interp(0.5, cdf, x))
+        stats[pair] = (at, med, float(t["area_ha"].sum()))
+        a.plot(x, cdf, color=PAIR_COLOR[pair], lw=1.2 if pair != "all_crops|biomethane" else 1.0,
+               ls=PAIR_LS.get(pair, "-"), zorder=3)
+        a.plot([REACH_RADIUS], [at], "o", ms=3.0, color=PAIR_COLOR[pair], mec=fs.INK, mew=0.3, zorder=4)
+    a.axvline(REACH_RADIUS, color=fs.MUTED, lw=0.6, ls=(0, (2, 1.5)), zorder=1)
+    a.text(REACH_RADIUS + 1.5, 0.6, f"{REACH_RADIUS:.0f} km", fontsize=fs.FS_CRED, color=fs.MUTED, va="center")
+    a.set_xlim(0, 150)
+    a.set_ylim(0, 1.0)
+    a.set_xticks([0, 30, 50, 100, 150])
+    a.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    a.set_xlabel("Straight-line distance to the nearest operating plant that uses the crop (km)")
+    a.set_ylabel("Share of the crop area\nwithin the distance")
+    axis_style(a)
+    a.grid(color=fs.FAINT, lw=0.4)
+    # labels right of the chart: pair, share at 30 km, median distance; ordered as the curves at 150 km
+    order = sorted(pairs, key=lambda p: -stats[p][0])
+    xl, top = 92.0, ya + CH - 9.0
+    cv.text(xl, top + 1.2, f"within {REACH_RADIUS:.0f} km · median", fontsize=fs.FS_CRED, color=fs.MUTED,
+            va="bottom")
+    step = (CH - 11.0) / len(order)
+    for k, pair in enumerate(order):
+        at, med, tot = stats[pair]
+        yy = top - (k + 0.5) * step
+        cv.ov.plot([xl, xl + 4.0], [yy + 1.0] * 2, color=PAIR_COLOR[pair], ls=PAIR_LS.get(pair, "-"), lw=1.2)
+        cv.text(xl + 5.0, yy + 1.0, REACH_TITLE[pair], fontsize=fs.FS_ITEM, fontweight="bold", va="center")
+        cv.text(xl + 5.0, yy - 1.5, f"{100 * at:.1f} % · {med:.0f} km   ({tot / 1e6:.2f} Mha)", fontsize=fs.FS_CRED,
+                va="center")
+        ctx.ck.add(f"fig7_{pair}_{REACH_RADIUS:.0f}km", True, f"{at:.1%} within {REACH_RADIUS:.0f} km, median "
+                   f"{med:.0f} km, {tot / 1e6:.2f} Mha", at)
+    cv.text(1.0, FH - 0.8, "How much of each crop is within reach of an existing plant", fontsize=fs.FS_LABEL,
+            fontweight="bold", va="top")
+
+    # ---- the maps: share at 30 km per municipality ---------------------------------------------------------------
+    cmap = colormaps["YlGnBu"]
+    colors = [cmap(v) for v in np.linspace(0.12, 0.95, len(SHARE_LABELS))]
+    mun = units[(units["level"] == "municipality") & (units["radius_km"] == REACH_RADIUS)]
+    g = ctx.g[["geocode", "geometry"]]
+    cv.text(1.0, maps_top + 2.6, f"Where: share of each municipality's crop area within {REACH_RADIUS:.0f} km",
+            fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+
+    def cell(i):
+        r, c = divmod(i, ncol)
+        return 1.0 + c * (w + gap), CR + (nrow - 1 - r) * (MH + TT + RG)
+
+    for i, pair in enumerate(pairs):
+        x, y = cell(i)
+        a = cv.map_ax(x, y, ext, S)
+        t = mun[mun["pair"] == pair].assign(geocode=lambda d: d["unit"].astype("int64")).set_index("geocode")
+        m = g.assign(share=g["geocode"].map(t["share"]), area=g["geocode"].map(t["crop_area_ha"]).fillna(0))
+        little = m["area"] < REACH_MIN_HA
+        m[little].plot(ax=a, color="#f1f1f1", linewidth=0, zorder=1, rasterized=True)
+        cls = np.digitize(m.loc[~little, "share"].fillna(0), SHARE_EDGES[1:-1])
+        m.loc[~little].plot(ax=a, color=[colors[k] for k in cls], linewidth=0, zorder=1.2, rasterized=True)
+        ctx.states.boundary.plot(ax=a, color="#6a6a6a", linewidth=0.2, zorder=3)
+        ctx.country.boundary.plot(ax=a, color=fs.COUNTRY_EDGE, linewidth=0.4, zorder=3.2)
+        if ctx.plants is not None:
+            P = ctx.plants[(ctx.plants["family"] == pair.split("|")[1])
+                           & ctx.plants["operating"].fillna(True).astype(bool)]
+            a.scatter(P["x"], P["y"], s=0.5, c="white", edgecolors=PLANT_INK, linewidths=0.2, zorder=5)
+        map_frame(a, ext)
+        cv.text(x + 0.3, y + MH + 0.4, REACH_TITLE[pair], fontsize=fs.FS_ITEM, fontweight="bold", va="bottom")
+        cv.text(x + MW - 0.3, y + 0.4, f"{100 * stats[pair][0]:.1f} %", fontsize=fs.FS_ITEM, ha="right",
+                va="bottom")
+    xl, yl = cell(len(pairs))                     # the free cell: legend, north arrow, scale bar
+    rows = [("patch", {"fc": c, "ec": "#7a7a7a"}, lab) for c, lab in zip(colors[::-1], SHARE_LABELS[::-1],
+                                                                          strict=True)]
+    cv.legend(xl + 2.0, yl + MH + TT - 1.0, [(f"Crop area within {REACH_RADIUS:.0f} km", rows),
+                                             ("", [("patch", {"fc": "#f1f1f1", "ec": "#7a7a7a"},
+                                                    f"< {REACH_MIN_HA:.0f} ha of the crop"),
+                                                   ("dot", (1.8, "white", PLANT_INK, 0.3), "operating plant")])],
+              header=None)
+    cv.north(xl + w - 4.0, yl + 6.0, h=3.5)
+    cv.scale(xl + 2.0, yl + 1.5, S, seg_km=1000, n=1, compact=True)
+    cv.text(FW - 1.0, 0.4, f"MapBiomas Col. 11 {ctx.year}, 30 m; plants: ANP, CIBiogás. EPSG:5880. "
+            + fs.CREDIT_CARTO, fontsize=fs.FS_CRED - 0.2, color=fs.MUTED, ha="right", va="bottom")
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# Fig 8 — the same question read at three supports (MAUP), at 30 km, and how the gap closes with the radius
+# ---------------------------------------------------------------------------
+MAUP_MARKS = [  # (resolution, rule, label, marker, face, edge, size), drawn back to front
+    ("rgint", "area_fraction", "intermediate region", "^", "#6a6a6a", "#6a6a6a", 4.6),
+    ("municipality", "area_fraction", "municipality", "s", "#c1121f", "#c1121f", 4.2),
+    ("pixel", "pixel", "30 m pixel (reference)", "o", "#1a1a1a", "#1a1a1a", 5.0),
+]
+
+
+def maup_result(ctx: Ctx, host=None):
+    """Fig 8, one chart: the share of each crop within 30 km of a paired plant, read from the 30 m pixels, from the
+    land of the municipality and from the land of the intermediate region (area-fraction rule), with the gap of
+    the region to the pixel on the right. The point rules and the other radii are in
+    the text (bbp scale tables)."""
+    sc = ctx.t("scale")
+    if sc is None:
+        return None
+    r30 = sc[sc["radius_km"] == REACH_RADIUS]
+    pairs = [p for p in REACH_PAIRS if p in set(r30["pair"])]
+    val = r30.set_index(["pair", "resolution", "rule"])["share"]
+    n, rh = len(pairs), 7.0
+    y0, FW = 10.0, fs.FULL_W
+    FH = y0 + n * rh + 9.0
+    cv = fs.canvas(FW, FH, host)
+    xa, wa = 26.0, 88.0
+    a = cv.ax(xa, y0, wa, n * rh)
+    ys = np.arange(n)[::-1]
+    for y, p in zip(ys, pairs, strict=True):
+        vs = [val.get((p, res, rule), np.nan) for res, rule, *_ in MAUP_MARKS]
+        a.plot([np.nanmin(vs), np.nanmax(vs)], [y, y], color="#d4d4d4", lw=2.6, solid_capstyle="round", zorder=1)
+        for (_, _, _, mk, fc, _ec, ms), v in zip(MAUP_MARKS, vs, strict=True):
+            if np.isfinite(v):
+                a.plot(v, y, mk, ms=ms, mfc=fc, mec="white", mew=0.4, zorder=3)
+        px, rg = val.get((p, "pixel", "pixel"), np.nan), val.get((p, "rgint", "area_fraction"), np.nan)
+        a.text(px + 0.025, y + 0.22, f"{100 * px:.1f} %", fontsize=fs.FS_CRED, va="bottom", ha="left")
+        gap = rg - px
+        big = abs(gap) >= 0.03
+        cv.text(xa + wa + 8.5, y0 + (y + 0.5) * rh, f"{100 * gap:+.1f}".replace("-", "−"), fontsize=fs.FS_ITEM,
+                ha="center", va="center", color=fs.DETAIL if big else fs.INK, fontweight="bold" if big else "normal")
+    a.set_yticks(ys, [REACH_TITLE[p] for p in pairs], fontsize=fs.FS_ITEM)
+    a.tick_params(axis="y", length=0)
+    a.set_ylim(-0.6, n - 0.4)
+    a.set_xlim(0, 1.0)
+    a.xaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f} %")
+    a.set_xlabel(f"Crop area within {REACH_RADIUS:.0f} km of a paired plant")
+    axis_style(a)
+    a.spines["left"].set_visible(False)
+    a.grid(axis="x", color=fs.FAINT, lw=0.4)
+    cv.text(xa + wa + 8.5, y0 + n * rh + 0.8, "region − pixel\n(points)", fontsize=fs.FS_CRED, ha="center",
+            va="bottom", linespacing=1.1)
+    cv.text(xa, FH - 2.4, "measured from the", fontsize=fs.FS_CRED, va="center", color=fs.MUTED)
+    kx = xa + 19.0                                        # key above the chart
+    for _, _, lab, mk, fc, _ec, ms in MAUP_MARKS[::-1]:
+        cv.ov.plot([kx + 1.0], [FH - 2.4], mk, ms=ms * 0.85, mfc=fc, mec="white", mew=0.4)
+        cv.text(kx + 2.6, FH - 2.4, lab, fontsize=fs.FS_CRED, va="center")
+        kx += 4.0 + len(lab) * 1.0
+    for p in pairs:
+        ctx.ck.add(f"fig8_{p}_30km", True, "pixel {:.1%}, municipality {:.1%}, region {:.1%}".format(
+            val.get((p, "pixel", "pixel"), np.nan), val.get((p, "municipality", "area_fraction"), np.nan),
+            val.get((p, "rgint", "area_fraction"), np.nan)))
+    return cv
+
+
+# ---------------------------------------------------------------------------
+# Fig 9 bottom row: the biomethane mandate as one ruler (targets, ANP flows and the N1 stock on one axis)
+# ---------------------------------------------------------------------------
+RULER_H = 33.0
+
+
+def mandate_ruler(ctx: Ctx, host=None, head: str | None = None):
+    """Every number of the mandate on one horizontal axis, in million m³ per day: the targets (official volumes
+    filled, indicative ones open), the ANP flows at the cut-off (production and authorised capacity, bars from
+    zero) and the stock, N1 of the crops within 30 km of the existing biomethane plants (band: factor envelope)."""
+    tg, st = ctx.d("mandate_targets"), ctx.d("mandate_stock")
+    snaps = ctx.proc / "plants_biomethane_snapshots.parquet"
+    if tg is None or not snaps.exists():
+        return None
+    cur = pd.read_parquet(snaps).iloc[-1]
+    FW, FH = fs.FULL_W, RULER_H
+    cv = fs.canvas(FW, FH, host)
+    a = cv.ax(24.0, 10.0, FW - 25.5, FH - 16.0)
+    lanes = {"targets": 2.0, "flows": 1.0, "stock": 0.0}
+    vol = (tg["volume_m3d"] / 1e6).to_numpy()
+    off = (tg["volume_source"] == "official").to_numpy()
+    for y_, v, o in zip(tg["year"], vol, off, strict=True):
+        a.plot([v, v], [lanes["targets"] - 0.28, lanes["targets"] + 0.28], color=fs.INK, lw=0.6)
+        a.plot(v, lanes["targets"], "v", ms=4.2, mfc=fs.INK if o else "white", mec=fs.INK, mew=0.7, zorder=4)
+        a.text(v, lanes["targets"] + 0.38, f"{y_}\n{v:.2f}", fontsize=fs.FS_CRED - 0.2, ha="center", va="bottom",
+               linespacing=1.05)
+    green, red = fs.CROP_COLORS["sugarcane"], "#c1121f"
+    for k, (v, col, lab) in enumerate([(cur["produced_m3d"] / 1e6, red, "produced"),
+                                       (cur["authorised_m3d"] / 1e6, green, "authorised")]):
+        yb = lanes["flows"] + (0.17 if k else -0.17)
+        a.barh(yb, v, height=0.28, left=0, color=col, lw=0, zorder=3)
+        a.text(v + 0.06, yb, f"{v:.2f} {lab}", fontsize=fs.FS_CRED - 0.2, va="center", ha="left")
+    if st is not None:
+        s30 = st[(st["pair"] == "all_crops|biomethane") & (st["radius_km"] == REACH_RADIUS)]
+        if len(s30):
+            r = s30.iloc[0]
+            lo, ref, hi = r["n1_min_m3d"] / 1e6, r["n1_ref_m3d"] / 1e6, r["n1_max_m3d"] / 1e6
+            a.barh(lanes["stock"], hi - lo, left=lo, height=0.5, color="#dfeee6", ec="#9cc9b0", lw=0.5, zorder=2)
+            a.plot([ref, ref], [lanes["stock"] - 0.25, lanes["stock"] + 0.25], color="#3f7f5c", lw=1.0, zorder=3)
+            a.text(lo - 0.06, lanes["stock"], f"{ref:.1f} ({lo:.1f}–{hi:.1f})", fontsize=fs.FS_CRED - 0.2,
+                   ha="right", va="center", color="#3f7f5c")
+    a.set_yticks(list(lanes.values()), ["targets", f"ANP, {cur['snapshot']}",
+                                        f"N$_1$ within {REACH_RADIUS:.0f} km"], fontsize=fs.FS_CRED)
+    a.tick_params(axis="y", length=0)
+    a.spines["left"].set_visible(False)
+    a.set_ylim(-0.5, 3.1)
+    a.set_xlim(0, 7.6)
+    a.set_xlabel("Million m³ of methane per day", labelpad=1)
+    axis_style(a, grid_y=False)
+    a.grid(axis="x", color=fs.FAINT, lw=0.4)
+    if head:
+        cv.text(1.0, FH - 0.8, head, fontsize=fs.FS_LABEL, fontweight="bold", va="top")
+    cv.text(FW - 1.0, 0.4, "Filled: official volume (CNPE Res. 4/2026; MME Ord. 942/2026, consultation); open: "
+            "indicative, % × the 2027 base. Flows: ANP open data. Stock: theoretical methane, not supply.",
+            fontsize=fs.FS_CRED - 0.5, color=fs.MUTED, ha="right", va="bottom")
+    ctx.ck.add("fig9_mandate_ruler", True, f"{len(tg)} targets; produced {cur['produced_m3d'] / 1e6:.2f}, "
+               f"authorised {cur['authorised_m3d'] / 1e6:.2f} M m³/d", float(cur["produced_m3d"]))
+    return cv

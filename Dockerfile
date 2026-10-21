@@ -5,11 +5,11 @@
 #
 # GDAL comes bundled inside the rasterio / pyogrio wheels: no system GDAL needed,
 # but the wheels still link the system libexpat, which python:3.12-slim (Debian
-# trixie) no longer ships.
+# trixie) no longer ships. Liberation Sans (SIL OFL, metric-compatible with Arial) is the paper figures typeface.
 FROM python:3.12-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libexpat1 \
+ && apt-get install -y --no-install-recommends libexpat1 fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 
 ARG GIT_COMMIT=""

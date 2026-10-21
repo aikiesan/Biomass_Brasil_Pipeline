@@ -21,9 +21,15 @@ inputs:
 
   mapbiomas_municipal_xlsx: "MapBiomas_Update_2025_Colecao_11/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY_2025/MAPBIOMAS_BRAZIL-COL.11-BIOME_STATE_MUNICIPALITY.xlsx"
   mapbiomas_legend_csv: "MapBiomas_Update_2025_Colecao_11/legend_code_mapbiomas_brazil_collection_11.csv"
+  # Irrigation systems (center pivot, other systems) by municipality and irrigated crop: H2 predictor
+  mapbiomas_irrigation_xlsx: "MapBiomas_Update_2025_Colecao_11/MAPBIOMAS-BRAZIL-IRRIGATION-SYSTEMS-MUNICIPALITY-COLLECTION_11.xlsx"
 
 
   second_crop_tif_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Segunda_Safra_TIF"
+  # Collection 11 coverage rasters (30 m), one per year: border-share predictor (bbp border-share)
+  coverage_tif_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Cobertura_Col11_TIF"
+  # landsat_valid_obs_<year>.csv exported by docs/gee/landsat_valid_observations.js: H2 cloud proxy
+  landsat_valid_obs_dir: "00_Primary_Data_Sources_PILAR2b/07_MapBiomas/Landsat_Valid_Obs"
   # National series exported from the MapBiomas platform; used only as an invariant check
   second_crop_national_csv: "00_Primary_Data_Sources_PILAR2b/11_Analises_Complementares/Milho2_Serasa/Série temporal de Agricultura • Uso agrícola - Segunda safra por classe • 2000 - 2024.csv"
 
@@ -187,11 +193,35 @@ second_crop:
     other_2nd: "Outras culturas de segunda safra / Cobertura"
   national_tolerance: 0.005 # |pipeline − MapBiomas| / MapBiomas allowed per year (observed: < 0.01 %)
 
+border_share:
+  # share of each crop's observed area within these distances of a boundary with another
+  # municipality (H2 predictor); computed from the coverage rasters for the reference years
+  tif_pattern: "brazil_coverage-col11_{year}.tif"
+  years: [2020, 2021, 2022, 2023, 2024]
+  distances_m: [1000, 2000]
+  window: 2048
+  # the rasters must reproduce the Collection 11 municipal statistics: median |raster/stats − 1|
+  # (Collection 10 rasters differ by 1–3 %)
+  collection_tolerance: 0.005
+
 reconcile:
   scales: [municipality, rgint, uf, nation]
   tolerances: [0.10, 0.25]   # share of units with |A_obs/A_dec − 1| <= tol
   min_area_ha: 50            # units where both sources are below this are not scored
   reference_years: [2020, 2021, 2022, 2023, 2024]
+  # trend agreement: change between two windows (mean of each), units where both sources
+  # report every year of both windows and reach trend_min_area_ha in all four means
+  trend_windows: [[2008, 2012], [2020, 2024]]
+  trend_min_area_ha: 100
+  # bins of the size of the change, mean |Δlog| of the two sources: ln 1.10, ln 1.25, ln 1.50 (10, 25, 50 %)
+  trend_magnitude_edges: [0.0953102, 0.2231436, 0.4054651]
+
+analyse:
+  # H2 models over the municipal log-ratio. years: default = reconcile.reference_years;
+  # crops: default = every crop with an observed (MapBiomas) area
+  years: null
+  crops: null
+  min_observations: 200
 
 inventory:
   # Yield fallback when a municipality has observed area but no declared area
@@ -206,3 +236,127 @@ database:
   sidra_tables: [1612, 1613, 3939, 74, 94, 3940]
   sidra_exclude_variables: [value_thousand_brl]
   # processed/sanitation.parquet goes to bbp.sanitation (view bbp.v_sanitation)
+
+# -----------------------------------------------------------------------------
+# Processing plants (`bbp run plants` -> interim/plants.parquet, processed/plants*.parquet) and the crop area
+# within reach of them (`bbp reach`, 30 m, resumable -> processed/reach_*.parquet). Paths relative to raw_root.
+# `cutoff`: the date the source was exported (null = not recorded yet; reported as a warning).
+# -----------------------------------------------------------------------------
+plants:
+  sources:
+    anp_ethanol: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/Plantas de etanol.csv",
+                  label: "ANP — ethanol plants (Painel Dinâmico)", cutoff: null}
+    anp_biodiesel: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/anp/Plantas de biodiesel.csv",
+                    label: "ANP — biodiesel plants (Painel Dinâmico)", cutoff: null}
+    # ANP biomethane open data: plants of the `snapshot` month operate; older plants are kept, not operating.
+    # `history`: earlier snapshots summarised for the record only (plants_biomethane_snapshots).
+    anp_biomethane:
+      path: "biometano-dados-abertos/Biometano_DadosAbertos_CSV_Capacidade.csv"
+      production: "biometano-dados-abertos/Biometano_DadosAbertos_CSV_Producao.csv"
+      label: "ANP — biomethane open data (capacity, production)"
+      snapshot: "08/2026"
+      history: ["04/2026"]
+      # figures quoted for the August 2026 cut-off (paper brief); checked, not used
+      expected: {plants: 21, authorised_m3d: 1370000, produced_m3d: 530000}
+      expected_tolerance: 0.02
+    biogas: {path: "MapBiomas_Update_2025_Colecao_11/structure_biogas_plant/usina_biogas.shp",
+             label: "CIBiogás BiogasMap (MapBiomas infrastructure layer)", cutoff: null}
+    biomass_power: {path: "MapBiomas_Update_2025_Colecao_11/structure_biomass_thermal_power_plant/Usinas_Termele╠ütricas_UTE_Biomassa.shp",
+                    label: "ANEEL SIGA biomass power plants (MapBiomas infrastructure layer)", cutoff: null}
+    slaughterhouses: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/mapbiomas_infra/structure_slaughterhouse/frigorificos.shp",
+                      label: "MAPA SIF slaughterhouses (MapBiomas infrastructure layer)", cutoff: null}
+  # other registers of the cane mills: where the ANP mills are is checked against them (share within 2 km)
+  registers:
+    conab: {path: "00_Primary_Data_Sources_PILAR2b/14_Processing_Plants/conab/UNIDADE_PRODUCAO_ETANOL_ACUCAR_BR_ATIVAS_2025.zip",
+            label: "CONAB active units 2025", min_share_2km: 0.70}
+    epe: {path: "MapBiomas_Update_2025_Colecao_11/structure_ethanol_plant/usina_etanol.shp",
+          label: "MapBiomas / EPE webmap 2018"}
+  # one site, several functions: rows of these families closer than site_link_km are the same site
+  site_links:
+    - [sugarcane_mill, "biomass_power:bagasse"]
+    - [biogas, "biomass_power:biogas"]
+  site_link_km: 2.0
+  duplicate_km: 2.0             # same family and source, closer than this, different sites: possible duplicate
+  capacity_required: [sugarcane_mill, corn_ethanol, biodiesel, biomethane, biomass_power]
+  reach:
+    year: 2024                  # coverage raster and second-crop raster of this year
+    radii_km: [10, 20, 30, 50, 75, 100]
+    bin_km: 1                   # distance histograms: 1 km bins to max_km per municipality, to 2000 km nationally
+    max_km: 150
+    ring_max_km: 150            # sugarcane mills: cane area in 1 km rings up to this distance (as the exploratory x03)
+    competition_km: 30          # plants of the paired family within this distance of each pixel
+    competition_cap: 10
+    # cane a mill needs: crushing class midpoint / yield (assumption, CONAB 2024/25 national ~75 t/ha)
+    cane_yield_t_ha: 75
+    window: 4096                # pixels per side of a processing window
+    check_factor: 16            # aggregation check: the same distances from 480 m cell centres
+    # crops by MapBiomas class: `coverage` classes of the coverage raster, `second_crop` values of the
+    # second-crop raster; a pixel in both counts once
+    crops:
+      sugarcane: {coverage: [20]}
+      soybean: {coverage: [39]}
+      corn_2nd: {second_crop: [1]}
+      all_crops: {coverage: [20, 35, 39, 40, 41, 46, 47, 48, 62], second_crop: [1, 41, 62]}
+    pairs:
+      - {crop: sugarcane, family: sugarcane_mill}
+      - {crop: corn_2nd, family: corn_ethanol}
+      - {crop: soybean, family: biodiesel}
+      - {crop: all_crops, family: biogas}
+      - {crop: all_crops, family: biomethane}
+  # `bbp scale`: the reach of the pairs above at the pixel, the municipality and the intermediate region.
+  # Rules for the units: area_fraction (main; the unit's crop spread like its land), centroid (sensitivity),
+  # representative_point (the exploratory x05). An infinite radius is always added (convergence check).
+  scale:
+    radii_km: [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000, 2000]
+    # share within 30 km in the exploratory x05 (480 m cells, April 2026 register, representative points);
+    # compared, not used
+    exploratory_x05:
+      "sugarcane|sugarcane_mill": {pixel: 0.948, municipality: 0.919, rgint: 0.725}
+      "corn_2nd|corn_ethanol": {pixel: 0.106, municipality: 0.110, rgint: 0.0005}
+      "soybean|biodiesel": {pixel: 0.071, municipality: 0.097, rgint: 0.157}
+      "all_crops|biogas": {pixel: 0.247, municipality: 0.249, rgint: 0.256}
+      "all_crops|biomethane": {pixel: 0.0206, municipality: 0.0208, rgint: 0.017}
+
+# -----------------------------------------------------------------------------
+# Using the system (`bbp demo`): typology of the intermediate regions and the biomethane mandate ruler.
+# -----------------------------------------------------------------------------
+demo:
+  year: 2024
+  typology:
+    min_crop_kha: 10              # regions with less crop area are 'minor agriculture', not clustered
+    detection_share: 0.001        # parts below 0.1 % of a region's crop area are rounded zeros (CLR zero replacement)
+    k_range: [2, 12]              # Ward on CLR
+    select: stability             # k = best Ward/k-means agreement (ARI) among partitions with every cluster >= min_cluster
+    min_cluster: 10
+    seed: 0
+    # priority: N1 in the top quartile and less than priority_share of all crops within priority_km of a biogas plant
+    priority_n1_quantile: 0.75
+    priority_share: 0.25
+    priority_km: 30
+    expected_priorities: ["Sinop", "Cuiabá", "Barreiras", "Passo Fundo"]   # named in the paper brief; checked, not forced
+  mandate:
+    # GHG reduction targets of the natural-gas market met with biomethane (Lei 14.993/2024). Volumes as stated by
+    # the acts; a target without an official volume gets one from the base of `base_reference` (flagged derived).
+    targets:
+      - {year: 2026, ghg_reduction_pct: 0.5, volume_m3d: 504800, volume_m3_year: 181728000, status: "in force",
+         act: "Resolução CNPE nº 4/2026, art. 3 (DOU 06/05/2026, Seção 1, p. 4)",
+         url: "https://www.gov.br/mme/pt-br/assuntos/conselhos-e-comites/cnpe/resolucoes-do-cnpe/2026/resolucao-4-publicada.pdf",
+         accessed: "2026-10-19"}
+      - {year: 2027, ghg_reduction_pct: 1.0, volume_m3d: 995200, volume_m3_year: 363200000, base_reference: true,
+         status: "proposed, public consultation", act: "Portaria MME nº 942/2026 (consultation opened 06/10/2026)",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+      - {year: 2028, ghg_reduction_pct: 3.0, status: "indicative, under consultation", act: "Portaria MME nº 942/2026",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+      - {year: 2029, ghg_reduction_pct: 4.0, status: "indicative, under consultation", act: "Portaria MME nº 942/2026",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+      - {year: 2030, ghg_reduction_pct: 5.0, status: "indicative, under consultation", act: "Portaria MME nº 942/2026",
+         url: "https://www.gov.br/mme/pt-br/assuntos/noticias/mme-abre-consulta-publica-sobre-meta-de-reducao-de-emissoes-no-mercado-de-gas-natural-para-2027",
+         accessed: "2026-10-19"}
+    # no official target for 2035 (none drawn)
+    # stock: N1 of the crop residues within these radii of the pair's operating plants (theoretical methane, N1 only)
+    stock:
+      - {pair: "all_crops|biomethane", radii_km: [30, 100]}
+      - {pair: "all_crops|biogas", radii_km: [30]}

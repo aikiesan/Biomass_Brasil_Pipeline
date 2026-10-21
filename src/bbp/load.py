@@ -59,6 +59,11 @@ TABLES: dict[str, tuple[list[str], list[str]]] = {
     # SNIS (to 2022) + SINISA (from 2023) on harmonised variables; PILAR-2b reads bbp.v_sanitation.
     "sanitation": (["sanitation"], ["variable", "year", "geocode"]),
     "sanitation_continuity": (["sanitation_continuity"], ["variable"]),
+    # H2 results (analyse)
+    "h2_mixed_effects": (["h2_mixed_effects"], ["crop"]),
+    "h2_model_fit": (["h2_model_fit"], ["crop"]),
+    "h2_rf_importance": (["h2_rf_importance"], ["crop"]),
+    "h2_moran": (["h2_moran"], ["crop"]),
 }
 SIDRA_DROP_COLUMNS = ["name", "variable_raw"]  # municipality names live in the platform; raw label = variable
 N1_COMPACT = ["geocode", "year", "crop", "feedstock", "variant", "production_t", "yield_source",

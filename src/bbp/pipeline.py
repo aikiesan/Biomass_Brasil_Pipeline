@@ -94,6 +94,43 @@ def stage_ingest(cfg: Config, ck: CheckLog, force: bool = False) -> None:
     years_present = sorted(mb["year"].unique().tolist())
     ck.add("mapbiomas_years", years_present == cfg.years, f"{years_present[0]}–{years_present[-1]}", years_present)
 
+    # ---- MapBiomas irrigation systems (H2 predictor) ----------------------------
+    if "mapbiomas_irrigation_xlsx" in cfg.raw["inputs"]:
+        irr_xlsx = cfg.input_path("mapbiomas_irrigation_xlsx")
+        out_irr = cfg.out("interim", "mapbiomas_irrigation_municipal.parquet")
+        if force or not _is_fresh(out_irr, [irr_xlsx]):
+            _write(mapbiomas.read_irrigation_xlsx(irr_xlsx, cfg.years), cfg, "interim",
+                   "mapbiomas_irrigation_municipal.parquet")
+        irr = pd.read_parquet(out_irr)
+        collections = sorted(irr["collection"].unique().tolist())
+        ck.add("irrigation_same_collection_as_coverage", collections == [int(cfg.section("mapbiomas")["collection"])],
+               f"irrigation collection(s) {collections}", collections)
+        outside = sorted(set(irr["geocode"]) - mesh_codes)
+        ck.add("irrigation_geocodes_in_mesh", not outside, f"{len(outside)} not in mesh", outside[:20])
+        ck.add("irrigation_non_negative", bool((irr["area_ha"] >= 0).all()))
+        per_mun = irr.groupby(["geocode", "year"])["area_ha"].sum()
+        mun_area = mb.groupby(["geocode", "year"])["area_ha"].sum()
+        over = per_mun[per_mun > mun_area.reindex(per_mun.index) * 1.001]
+        ck.add("irrigation_within_municipal_area", over.empty, f"{len(over)} municipality-years exceed the municipal area",
+               [list(map(int, k)) for k in over.index[:20]])
+
+    # ---- clear Landsat observations (H2 cloud proxy; docs/gee/landsat_valid_observations.js) --
+    if "landsat_valid_obs_dir" in cfg.raw["inputs"]:
+        obs_dir = cfg.input_path("landsat_valid_obs_dir")
+        csvs = sorted(obs_dir.glob("landsat_valid_obs_*.csv")) if obs_dir.is_dir() else []
+        if ck.add("landsat_valid_obs_files", bool(csvs), f"{len(csvs)} CSV in {obs_dir.name} (run the GEE script)",
+                  len(csvs), severity="warn"):
+            obs = pd.concat([pd.read_csv(p) for p in csvs], ignore_index=True)
+            obs = obs.rename(columns={"CD_MUN": "geocode", "clear_obs_mean": "landsat_valid_obs"})
+            obs["geocode"], obs["year"] = obs["geocode"].astype("int64"), obs["year"].astype("int64")
+            outside = sorted(set(obs["geocode"]) - mesh_codes)
+            ck.add("landsat_valid_obs_geocodes_in_mesh", not outside, f"{len(outside)} not in mesh", outside[:20])
+            ck.add("landsat_valid_obs_unique", not obs.duplicated(["geocode", "year"]).any())
+            ck.add("landsat_valid_obs_one_masking", obs["crop_mask"].nunique() == 1,
+                   f"crop_mask values {sorted(obs['crop_mask'].astype(str).unique())}")
+            _write(obs[["geocode", "year", "landsat_valid_obs", "pixels"]], cfg, "interim",
+                   "landsat_valid_observations.parquet")
+
     # ---- SIDRA tables (PAM, PPM) ---------------------------------------------
     tables = cfg.sidra_tables()
     drop_vars = cfg.raw.get("sidra_drop_variables", [])
@@ -338,6 +375,70 @@ def stage_sanitation(cfg: Config, ck: CheckLog, force: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
+# border share (raster) — separate command, like second crop: it runs for hours
+# ---------------------------------------------------------------------------
+def stage_border_share(cfg: Config, ck: CheckLog, years: list[int] | None = None) -> None:
+    import geopandas as gpd
+
+    from bbp.ingest import border_share as bs
+    from bbp.ingest import second_crop as sc
+
+    spec = cfg.section("border_share")
+    sources = bs.find_year_sources(cfg.input_path("coverage_tif_dir"), spec["tif_pattern"], years or spec["years"])
+    ck.add("coverage_rasters_found", bool(sources), f"{len(sources)} years: {sorted(sources)}", sorted(sources))
+    if not sources:
+        return
+    # a year exported in tiles (Earth Engine) is read through a VRT mosaic built in data/interim
+    rasters = {}
+    for year, src in sources.items():
+        if isinstance(src, list):
+            vrt = cfg.out("interim", "coverage_vrt", f"{Path(spec['tif_pattern'].format(year=year)).stem}.vrt")
+            try:
+                meta = bs.build_vrt(src, vrt)
+            except ValueError as exc:
+                ck.add(f"coverage_{year}_tiles_form_one_mosaic", False, str(exc))
+                continue
+            ck.add(f"coverage_{year}_tiles_form_one_mosaic", True,
+                   f"{meta['tiles']} tiles -> {meta['width']:,} x {meta['height']:,} px")
+            rasters[year] = vrt
+        else:
+            rasters[year] = src
+    classes = {int(c): crop for crop, s in cfg.crops.items() for c in (s.get("mapbiomas_class") or [])}
+    coverage = pd.read_parquet(cfg.data_dir / "interim" / "mapbiomas_coverage_municipal.parquet")
+    mesh = None
+    tol = float(spec.get("collection_tolerance", 0.005))
+    out = cfg.out("interim", "border_share_municipal.parquet")
+    kept = [pd.read_parquet(out)] if out.exists() else []
+    for year, path in sorted(rasters.items()):
+        key = bs.grid_key(path)
+        grid = cfg.out("interim", f"municipality_grid_{key}.tif")
+        if not grid.exists():
+            if mesh is None:
+                mesh = gpd.read_parquet(cfg.out("interim", "municipalities_geom.parquet"))
+                mesh = mesh[mesh["is_municipality"]]
+            sc.build_label_grid(mesh, path, grid, window=spec.get("window", 2048))
+        table = bs.border_area(grid, {year: path}, classes, spec.get("distances_m", [1000, 2000]),
+                               window=spec.get("window", 2048),
+                               checkpoint=cfg.out("interim", f"border_share_checkpoint_{year}.npz"))
+        # guard: the rasters must be the collection the areas come from (see collection_agreement)
+        agree = bs.collection_agreement(table, coverage, classes)
+        med = float(agree["rel"].abs().median()) if len(agree) else float("nan")
+        ok = ck.add(f"border_share_{year}_raster_matches_collection_{cfg.section('mapbiomas')['collection']}",
+                    med <= tol, f"median |raster/statistics − 1| = {med:.3%} over {len(agree)} municipality-crops "
+                    f"(≤ {tol:.1%} expected for the same collection; 1–3 % for another)", med)
+        if not ok:
+            _write(table, cfg, "interim", f"border_share_rejected_{year}.parquet")
+            continue
+        kept = [k[k["year"] != year] for k in kept] + [table]
+        share = table[table["crop"] == bs.ALL]
+        log.info("Border share %d: median share of crop area within 1 km %.3f, 2 km %.3f", year,
+                 share["border_share_1km"].median(), share["border_share_2km"].median())
+    if kept:
+        _write(pd.concat(kept, ignore_index=True).sort_values(["year", "crop", "geocode"]), cfg,
+               "interim", "border_share_municipal.parquet")
+
+
+# ---------------------------------------------------------------------------
 # second crop (raster) — separate command because it runs for hours
 # ---------------------------------------------------------------------------
 def stage_second_crop(cfg: Config, ck: CheckLog, years: list[int] | None = None, grid_only: bool = False) -> None:
@@ -381,6 +482,18 @@ def stage_second_crop(cfg: Config, ck: CheckLog, years: list[int] | None = None,
                 rel = total / ref[y] - 1
                 ck.add(f"second_crop_{cls}_{y}_vs_mapbiomas_series", abs(rel) <= tol,
                        f"pipeline {total / 1e6:.3f} Mha vs MapBiomas {ref[y] / 1e6:.3f} Mha ({rel:+.2%})", rel)
+
+
+# ---------------------------------------------------------------------------
+# processing plants (one national register; bbp reach reads it)
+# ---------------------------------------------------------------------------
+def stage_plants(cfg: Config, ck: CheckLog) -> None:
+    from bbp.plants import build_plants
+
+    if not cfg.section("plants").get("sources"):
+        ck.add("plants_configured", False, "no plants.sources in pipeline.yaml", severity="warn")
+        return
+    build_plants(cfg, ck)
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +589,53 @@ def stage_reconcile(cfg: Config, ck: CheckLog) -> None:
             diff = (t - ref.reindex(t.index)).abs().max().max()
             ck.add(f"scale_{s}_sums_to_nation", diff < 1.0, f"max |diff| = {diff:.3f} ha", float(diff))
 
-    _write(rc.predictors(area, attrs, mb), cfg, "processed", "predictors.parquet")
+    # trend agreement: do the sources agree on the change between two windows, not only on the level?
+    windows = spec.get("trend_windows", [[cfg.years[0], cfg.years[0] + 4], [cfg.years[-5], cfg.years[-1]]])
+    (a0, b0), (a1, b1) = windows
+    if ck.add("trend_windows_ordered_within_years", cfg.years[0] <= a0 <= b0 < a1 <= b1 <= cfg.years[-1],
+              f"windows {windows}, years {cfg.years[0]}–{cfg.years[-1]}"):
+        tu = rc.trend_units(pd.concat(units.values(), ignore_index=True), windows,
+                            float(spec.get("trend_min_area_ha", 100)))
+        tr = rc.trend_agreement(tu)
+        tr.insert(2, "window_0", f"{a0}–{b0}")
+        tr.insert(3, "window_1", f"{a1}–{b1}")
+        _write(tu, cfg, "processed", "trend_units.parquet")
+        _write(tr, cfg, "processed", "trend_agreement.parquet")
+        # the four directions leave only exact zero changes ("flat") out, so they sum to at most one
+        shares = tr[[f"share_{d}" for d in rc.DIRECTIONS[:4]]].sum(axis=1)
+        ck.add("trend_direction_shares_at_most_one", bool((shares <= 1 + 1e-9).all()),
+               f"max sum = {shares.max():.6f}", float(shares.max()))
+        nat = tr[tr["scale"] == "nation"].set_index("crop")
+        ck.add("trend_nation_one_unit_per_crop", bool((nat["n_units"] == 1).all()), "", int(nat["n_units"].max()))
+
+        mag = rc.trend_by_magnitude(tu, spec.get("trend_magnitude_edges", [0.10, 0.25, 0.50]))
+        _write(mag, cfg, "processed", "trend_by_magnitude.parquet")
+        cover = mag.groupby(["scale", "crop"])["area_share"].sum()
+        ck.add("trend_magnitude_bins_cover_the_area", bool(np.allclose(cover, 1.0)),
+               f"area share summed over bins: {cover.min():.6f}–{cover.max():.6f}", float(cover.min()))
+
+        lc = rc.landcover_change(mb, windows, rc.TREND_COVERS)
+        _write(lc, cfg, "processed", "landcover_change.parquet")
+        net = lc[[f"dpp_{k}" for k in rc.TREND_COVERS]].sum(axis=1)
+        # the covers are disjoint, so their changes in share can never add up to more than 100 pp
+        ck.add("landcover_change_within_100pp", bool((net.abs() <= 100 + 1e-6).all()),
+               f"max |sum| = {net.abs().max():.3f} pp", float(net.abs().max()))
+        tl = rc.trend_landcover(tu, lc)
+        _write(tl, cfg, "processed", "trend_landcover.parquet")
+        ck.add("trend_landcover_every_crop", set(tl["crop"]) == set(tu.loc[tu["scale"] == "municipality", "crop"]),
+               f"{sorted(set(tl['crop']))}", severity="warn")
+        log.info("Trend agreement (share same sign):\n%s",
+                 tr.pivot_table(index="crop", columns="scale", values="share_same_sign").round(2).to_string())
+
+    def optional(*parts: str) -> pd.DataFrame | None:
+        p = cfg.data_dir.joinpath(*parts)
+        ck.add(f"predictor_input_{p.stem}", p.exists(), "" if p.exists() else f"{p.name} not built yet", severity="warn")
+        return pd.read_parquet(p) if p.exists() else None
+
+    pred = rc.predictors(area, attrs, mb, irrigation=optional("interim", "mapbiomas_irrigation_municipal.parquet"),
+                         border=optional("interim", "border_share_municipal.parquet"),
+                         observations=optional("interim", "landsat_valid_observations.parquet"))
+    _write(pred, cfg, "processed", "predictors.parquet")
     nat = metrics[metrics["scale"] == "nation"].pivot_table(index="year", columns="crop", values="ratio_total", observed=True)
     log.info("National ratio observed/declared:\n%s", nat.round(3).to_string())
 
@@ -514,6 +673,58 @@ def stage_inventory(cfg: Config, ck: CheckLog) -> None:
 
 
 # ---------------------------------------------------------------------------
+# analyse (H2 models)
+# ---------------------------------------------------------------------------
+def stage_analyse(cfg: Config, ck: CheckLog) -> None:
+    import geopandas as gpd
+
+    from bbp import analyse as an
+
+    units = _read(cfg, "processed", "unit_ratios_municipality.parquet")
+    pred = _read(cfg, "processed", "predictors.parquet")
+    border_p = cfg.data_dir / "interim" / "border_share_municipal.parquet"
+    border = pd.read_parquet(border_p) if border_p.exists() else None
+    spec = cfg.section("analyse")
+    years = spec.get("years") or cfg.section("reconcile").get("reference_years", cfg.years[-5:])
+    crops = spec.get("crops") or [c for c, s in cfg.crops.items() if s.get("mapbiomas_class") or s.get("mapbiomas_second_crop")]
+    min_n = int(spec.get("min_observations", 200))
+    for name in ("irrigated_share", "border_share_1km", "landsat_valid_obs"):
+        present = name in pred or (name == "border_share_1km" and border is not None)
+        ck.add(f"h2_predictor_{name}", present, "" if present else "not available: model runs without it",
+               severity="warn")
+
+    geom = gpd.read_parquet(cfg.data_dir / "interim" / "municipalities_geom.parquet").set_index("geocode").geometry
+    neighbours = an.queen_neighbours(geom)
+
+    coefs, fits, imps, morans = [], [], [], []
+    for crop in crops:
+        df = an.model_frame(units, pred, border, years, crop)
+        if not ck.add(f"h2_{crop}_enough_observations", len(df) >= min_n, f"{len(df)} municipality-years", len(df),
+                      severity="warn"):
+            continue
+        c, stats, resid = an.mixed_model(df)
+        ck.add(f"h2_{crop}_mixed_model_converged", stats["converged"], severity="warn")
+        imp, rf_stats = an.random_forest(df)
+        res_mun = resid.groupby(df["geocode"]).mean()
+        mi = an.morans_i(res_mun, neighbours)
+        coefs.append(c.assign(crop=crop))
+        imps.append(imp.assign(crop=crop))
+        morans.append({"crop": crop, **mi})
+        fits.append({"crop": crop, "years": f"{min(years)}-{max(years)}", "predictors": ",".join(df.attrs["numeric"]),
+                     **stats, **{k: v for k, v in rf_stats.items() if k != "rf_r2_folds"}})
+        log.info("H2 %-10s n=%6d  R²m=%.3f R²c=%.3f  RF R²(cv)=%.3f  Moran's I=%.3f (p=%.3f)", crop, stats["n"],
+                 stats["r2_marginal"], stats["r2_conditional"], rf_stats["rf_r2_grouped_cv"], mi["morans_i"],
+                 mi["p_value"])
+    if not fits:
+        ck.add("h2_any_model", False, "no crop had enough observations")
+        return
+    _write(pd.concat(coefs, ignore_index=True), cfg, "processed", "h2_mixed_effects.parquet")
+    _write(pd.DataFrame(fits), cfg, "processed", "h2_model_fit.parquet")
+    _write(pd.concat(imps, ignore_index=True), cfg, "processed", "h2_rf_importance.parquet")
+    _write(pd.DataFrame(morans), cfg, "processed", "h2_moran.parquet")
+
+
+# ---------------------------------------------------------------------------
 # publish
 # ---------------------------------------------------------------------------
 def stage_publish(cfg: Config, ck: CheckLog) -> Path:
@@ -525,9 +736,11 @@ def stage_publish(cfg: Config, ck: CheckLog) -> Path:
 STAGE_FUNCS = {
     "ingest": stage_ingest,
     "sanitation": stage_sanitation,
+    "plants": stage_plants,
     "harmonise": stage_harmonise,
     "area": stage_area,
     "reconcile": stage_reconcile,
     "inventory": stage_inventory,
+    "analyse": stage_analyse,
     "publish": stage_publish,
 }
