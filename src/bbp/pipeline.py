@@ -589,6 +589,44 @@ def stage_reconcile(cfg: Config, ck: CheckLog) -> None:
             diff = (t - ref.reindex(t.index)).abs().max().max()
             ck.add(f"scale_{s}_sums_to_nation", diff < 1.0, f"max |diff| = {diff:.3f} ha", float(diff))
 
+    # trend agreement: do the sources agree on the change between two windows, not only on the level?
+    windows = spec.get("trend_windows", [[cfg.years[0], cfg.years[0] + 4], [cfg.years[-5], cfg.years[-1]]])
+    (a0, b0), (a1, b1) = windows
+    if ck.add("trend_windows_ordered_within_years", cfg.years[0] <= a0 <= b0 < a1 <= b1 <= cfg.years[-1],
+              f"windows {windows}, years {cfg.years[0]}–{cfg.years[-1]}"):
+        tu = rc.trend_units(pd.concat(units.values(), ignore_index=True), windows,
+                            float(spec.get("trend_min_area_ha", 100)))
+        tr = rc.trend_agreement(tu)
+        tr.insert(2, "window_0", f"{a0}–{b0}")
+        tr.insert(3, "window_1", f"{a1}–{b1}")
+        _write(tu, cfg, "processed", "trend_units.parquet")
+        _write(tr, cfg, "processed", "trend_agreement.parquet")
+        # the four directions leave only exact zero changes ("flat") out, so they sum to at most one
+        shares = tr[[f"share_{d}" for d in rc.DIRECTIONS[:4]]].sum(axis=1)
+        ck.add("trend_direction_shares_at_most_one", bool((shares <= 1 + 1e-9).all()),
+               f"max sum = {shares.max():.6f}", float(shares.max()))
+        nat = tr[tr["scale"] == "nation"].set_index("crop")
+        ck.add("trend_nation_one_unit_per_crop", bool((nat["n_units"] == 1).all()), "", int(nat["n_units"].max()))
+
+        mag = rc.trend_by_magnitude(tu, spec.get("trend_magnitude_edges", [0.10, 0.25, 0.50]))
+        _write(mag, cfg, "processed", "trend_by_magnitude.parquet")
+        cover = mag.groupby(["scale", "crop"])["area_share"].sum()
+        ck.add("trend_magnitude_bins_cover_the_area", bool(np.allclose(cover, 1.0)),
+               f"area share summed over bins: {cover.min():.6f}–{cover.max():.6f}", float(cover.min()))
+
+        lc = rc.landcover_change(mb, windows, rc.TREND_COVERS)
+        _write(lc, cfg, "processed", "landcover_change.parquet")
+        net = lc[[f"dpp_{k}" for k in rc.TREND_COVERS]].sum(axis=1)
+        # the covers are disjoint, so their changes in share can never add up to more than 100 pp
+        ck.add("landcover_change_within_100pp", bool((net.abs() <= 100 + 1e-6).all()),
+               f"max |sum| = {net.abs().max():.3f} pp", float(net.abs().max()))
+        tl = rc.trend_landcover(tu, lc)
+        _write(tl, cfg, "processed", "trend_landcover.parquet")
+        ck.add("trend_landcover_every_crop", set(tl["crop"]) == set(tu.loc[tu["scale"] == "municipality", "crop"]),
+               f"{sorted(set(tl['crop']))}", severity="warn")
+        log.info("Trend agreement (share same sign):\n%s",
+                 tr.pivot_table(index="crop", columns="scale", values="share_same_sign").round(2).to_string())
+
     def optional(*parts: str) -> pd.DataFrame | None:
         p = cfg.data_dir.joinpath(*parts)
         ck.add(f"predictor_input_{p.stem}", p.exists(), "" if p.exists() else f"{p.name} not built yet", severity="warn")

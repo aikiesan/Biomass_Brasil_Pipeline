@@ -29,7 +29,7 @@ PILAR-2b platform.
 
 | Hypothesis | Question | Stage | Main output |
 |---|---|---|---|
-| H1 – scale | Do the sources agree in aggregate and diverge per municipality? | `reconcile` | `agreement_by_scale` (municipality → AMC → intermediate region → state → nation) |
+| H1 – scale | Do the sources agree in aggregate and diverge per municipality? | `reconcile` | `agreement_by_scale` (municipality → AMC → intermediate region → state → nation); `trend_*`, `landcover_change`: do they also agree on the change between 2008–2012 and 2020–2024? |
 | H2 – structure | Is the divergence systematic and explainable? | `reconcile` | `unit_ratios_*`, `predictors` |
 | H3 – consequence | Does switching source move N1 and the municipal ranking as much as the conversion-factor uncertainty does? | `inventory` | `n1_municipal`, `source_vs_factor_effect`, `rank_shift` |
 
@@ -120,6 +120,11 @@ Unicamp VM (SSH tunnel) and the read-only role.
 | `crop_area` | municipality × year × crop | `a_obs_ha` (MapBiomas), `a_dec_ha`, `a_harv_ha`, `prod_t` (PAM) + SIDRA flags |
 | `agreement_by_scale` | scale × crop × year | ratio of totals, log-ratio percentiles, share within ±10/25 %, Lin's CCC, Spearman ρ |
 | `unit_ratios_<scale>` | unit × crop × year | A_obs, A_dec, ratio, log-ratio, presence class |
+| `trend_units` | scale × unit × crop | mean A_obs and A_dec in the early and late windows (`reconcile.trend_windows`), Δlog of each source, direction class |
+| `trend_agreement` | scale × crop | do the sources agree on the change? share with the same sign, by direction, Spearman ρ and Lin's CCC of Δlog, median and total Δlog per source |
+| `trend_by_magnitude` | scale × crop × size of change | direction agreement and share of the area by bin of mean \|Δlog\| |
+| `landcover_change` | municipality | change in the share of natural vegetation, pasture, mosaic of uses, other crops and forest plantation between the windows (pp, MapBiomas) |
+| `trend_landcover` | crop × cover × quantile | Spearman ρ between the trend gap (Δlog map − Δlog PAM) and the cover change; median gap and direction agreement per quantile of the change |
 | `predictors` | municipality × year | municipal area, dominant biome, crop share, double-crop intensity, new-municipality flag |
 | `n1_municipal` | municipality × year × crop × variant | N1 (Nm³ CH₄/yr) at ref/min/max and one-at-a-time bounds |
 | `source_vs_factor_effect` | crop × year | \|ln(N1_obs/N1_dec)\| vs ln(N1_max/N1_min) and per-factor widths |

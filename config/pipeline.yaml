@@ -209,6 +209,12 @@ reconcile:
   tolerances: [0.10, 0.25]   # share of units with |A_obs/A_dec − 1| <= tol
   min_area_ha: 50            # units where both sources are below this are not scored
   reference_years: [2020, 2021, 2022, 2023, 2024]
+  # trend agreement: change between two windows (mean of each), units where both sources
+  # report every year of both windows and reach trend_min_area_ha in all four means
+  trend_windows: [[2008, 2012], [2020, 2024]]
+  trend_min_area_ha: 100
+  # bins of the size of the change, mean |Δlog| of the two sources: ln 1.10, ln 1.25, ln 1.50 (10, 25, 50 %)
+  trend_magnitude_edges: [0.0953102, 0.2231436, 0.4054651]
 
 analyse:
   # H2 models over the municipal log-ratio. years: default = reconcile.reference_years;

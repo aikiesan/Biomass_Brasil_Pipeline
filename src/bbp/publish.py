@@ -23,7 +23,8 @@ log = logging.getLogger("bbp")
 
 TABLES = [
     "municipality_attributes", "crop_area", "agreement_by_scale", "unit_ratios_municipality", "unit_ratios_rgint",
-    "unit_ratios_uf", "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
+    "unit_ratios_uf", "trend_units", "trend_agreement", "trend_by_magnitude", "landcover_change", "trend_landcover",
+    "predictors", "n1_municipal", "source_vs_factor_effect", "rank_shift",
     "sanitation", "sanitation_continuity",
     "h2_mixed_effects", "h2_model_fit", "h2_rf_importance", "h2_moran",
     "plants", "plants_biomethane_snapshots", "plants_register_match",
